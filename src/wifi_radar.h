@@ -575,26 +575,26 @@ static uint16_t rdrFamColor(uint8_t type, uint8_t sub) {
 static void rdrHeader(LovyanGFX& sp) {
     sp.fillRect(0, 0, RDR_W, 11, RDR_C_BG);
     sp.setTextColor(RDR_C_FG, RDR_C_BG);
-    sp.setTextSize(1);
+    evilSetCnFont(sp, 1);
     sp.setCursor(2, 2);
-    const char* vn = rdr_view == RDRV_SCOPE ? "RADAR" : rdr_view == RDRV_TYPES ? "TYPES" :
-                     rdr_view == RDRV_LIST ? "LIST" : rdr_view == RDRV_CHANS ? "CHANS" :
-                     rdr_view == RDRV_BLE ? "BLE" : "DETAIL";
+    const char* vn = rdr_view == RDRV_SCOPE ? "雷达" : rdr_view == RDRV_TYPES ? "帧类" :
+                     rdr_view == RDRV_LIST ? "列表" : rdr_view == RDRV_CHANS ? "信道" :
+                     rdr_view == RDRV_BLE ? "蓝牙" : "详情";
     if (rdr_mode == RDR_MODE_BLE)
-        sp.printf("%s  adv/s %lu  dev %d", vn, (unsigned long)rdr_bleFps, rdr_bleCount);
+        sp.printf("%s 广播/s %lu 设备%d", vn, (unsigned long)rdr_bleFps, rdr_bleCount);
     else
-        sp.printf("%s ch%d%s fps%lu d%d", vn, rdr_channel, rdr_chanLock ? "*" : " ",
+        sp.printf("%s 信道%d%s 帧率%lu 设备%d", vn, rdr_channel, rdr_chanLock ? "*" : " ",
                   (unsigned long)rdr_fps, rdr_orderCount);
-    if (millis() < rdr_attackFlashUntil) { sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(RDR_W - 30, 2); sp.print("ATK"); }
-    if (rdr_pcapStream) { sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(RDR_W - 60, 2); sp.print("REC"); }
+    if (millis() < rdr_attackFlashUntil) { sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(RDR_W - 30, 2); sp.print("攻击"); }
+    if (rdr_pcapStream) { sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(RDR_W - 60, 2); sp.print("抓包"); }
     sp.drawFastHLine(0, 10, RDR_W, RDR_C_GRID);
 }
 static void rdrFooter(LovyanGFX& sp, const char* hint) {
     sp.drawFastHLine(0, RDR_H - 10, RDR_W, RDR_C_GRID);
     sp.setTextColor(RDR_C_DIM, RDR_C_BG);
-    sp.setTextSize(1);
+    evilSetCnFont(sp, 1);
     sp.setCursor(2, RDR_H - 8);
-    sp.print(hint);
+    sp.print(evilUtf8ClipPx(sp, String(hint), RDR_W - 4));
 }
 static void rdrDrawScope(LovyanGFX& sp) {
     const int cx = 62, cy = 72; const float R = 52;
@@ -616,56 +616,57 @@ static void rdrDrawScope(LovyanGFX& sp) {
     }
     // right column: stats + selected
     int x = 122, y = 14;
-    sp.setTextSize(1);
-    sp.setTextColor(RDR_C_BEACON, RDR_C_BG); sp.setCursor(x, y);      sp.printf("BEACON %lu", (unsigned long)rdr_sub[0][8]);
-    sp.setTextColor(RDR_C_PROBE,  RDR_C_BG); sp.setCursor(x, y + 11); sp.printf("PROBE  %lu", (unsigned long)(rdr_sub[0][4] + rdr_sub[0][5]));
-    sp.setTextColor(RDR_C_DATA,   RDR_C_BG); sp.setCursor(x, y + 22); sp.printf("DATA   %lu", (unsigned long)(rdr_sub[2][0] + rdr_sub[2][8]));
-    sp.setTextColor(RDR_C_MGMT,   RDR_C_BG); sp.setCursor(x, y + 33); sp.printf("MGMT   %lu", (unsigned long)(rdr_sub[0][11] + rdr_sub[0][13]));
-    sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(x, y + 44); sp.printf("ATK    %lu", (unsigned long)rdr_attackCount);
+    evilSetCnFont(sp, 1);
+    sp.setTextColor(RDR_C_BEACON, RDR_C_BG); sp.setCursor(x, y);      sp.printf("信标   %lu", (unsigned long)rdr_sub[0][8]);
+    sp.setTextColor(RDR_C_PROBE,  RDR_C_BG); sp.setCursor(x, y + 11); sp.printf("探测   %lu", (unsigned long)(rdr_sub[0][4] + rdr_sub[0][5]));
+    sp.setTextColor(RDR_C_DATA,   RDR_C_BG); sp.setCursor(x, y + 22); sp.printf("数据   %lu", (unsigned long)(rdr_sub[2][0] + rdr_sub[2][8]));
+    sp.setTextColor(RDR_C_MGMT,   RDR_C_BG); sp.setCursor(x, y + 33); sp.printf("管理   %lu", (unsigned long)(rdr_sub[0][11] + rdr_sub[0][13]));
+    sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(x, y + 44); sp.printf("攻击   %lu", (unsigned long)rdr_attackCount);
     if (rdr_orderCount > 0) {
         RdrDev& d = rdr_dev[rdr_order[rdr_sel]];
         sp.setTextColor(RDR_C_SEL, RDR_C_BG);
         sp.setCursor(x, y + 58);
-        const char* nm = d.hidden ? "<hidden>" : (d.ssid[0] ? d.ssid : "");
-        if (nm[0]) sp.printf("%.12s", nm);
+        const char* nm = d.hidden ? "<隐藏>" : (d.ssid[0] ? d.ssid : "");
+        if (nm[0]) sp.print(evilUtf8ClipPx(sp, String(nm), RDR_W - x - 2));
         else sp.printf("%02X%02X%02X", d.mac[3], d.mac[4], d.mac[5]);
         sp.setTextColor(RDR_C_FG, RDR_C_BG);
-        sp.setCursor(x, y + 69); sp.printf("%ddBm c%d", (int)d.rssi, d.apChannel ? d.apChannel : d.channel);
-        sp.setCursor(x, y + 80); sp.printf("%s%s%s", rdrEncName(d.enc), d.eapol ? " EAP" : "", d.attack ? " !!" : "");
+        sp.setCursor(x, y + 69); sp.printf("%ddBm 信道%d", (int)d.rssi, d.apChannel ? d.apChannel : d.channel);
+        sp.setCursor(x, y + 80); sp.printf("%s%s%s", rdrEncName(d.enc), d.eapol ? " 握手" : "", d.attack ? " !!" : "");
     }
-    rdrFooter(sp, ";. aim  ,/ ch  v:view  ent:info  bk:exit");
+    rdrFooter(sp, ";.选 ,/信道 v视图 OK详情 退格:退");
 }
 static void rdrDrawTypes(LovyanGFX& sp) {
     int y = 14;
-    sp.setTextSize(1);
+    evilSetCnFont(sp, 1);
     sp.setTextColor(RDR_C_FG, RDR_C_BG);
-    sp.setCursor(2, y); sp.printf("Total %lu   Dropped %lu", (unsigned long)rdr_totalFrames, (unsigned long)rdr_dropped);
+    sp.setCursor(2, y); sp.printf("总帧 %lu   丢包 %lu", (unsigned long)rdr_totalFrames, (unsigned long)rdr_dropped);
     y += 12;
     struct { const char* n; uint32_t v; uint16_t c; } rows[] = {
-        {"Beacon",   rdr_sub[0][8],  RDR_C_BEACON},
-        {"ProbeReq", rdr_sub[0][4],  RDR_C_PROBE},
-        {"ProbeRsp", rdr_sub[0][5],  RDR_C_PROBE},
-        {"Auth/Asc", rdr_sub[0][11] + rdr_sub[0][0] + rdr_sub[0][1], RDR_C_MGMT},
-        {"Data",     rdr_sub[2][0] + rdr_sub[2][8], RDR_C_DATA},
-        {"Deauth",   rdr_sub[0][12], RDR_C_ATTACK},
-        {"Disassoc", rdr_sub[0][10], RDR_C_ATTACK},
+        {"信标帧",   rdr_sub[0][8],  RDR_C_BEACON},
+        {"探测请求", rdr_sub[0][4],  RDR_C_PROBE},
+        {"探测响应", rdr_sub[0][5],  RDR_C_PROBE},
+        {"认证/关联", rdr_sub[0][11] + rdr_sub[0][0] + rdr_sub[0][1], RDR_C_MGMT},
+        {"数据帧",   rdr_sub[2][0] + rdr_sub[2][8], RDR_C_DATA},
+        {"解除认证", rdr_sub[0][12], RDR_C_ATTACK},
+        {"解除关联", rdr_sub[0][10], RDR_C_ATTACK},
     };
     uint32_t mx = 1;
     for (auto& r : rows) if (r.v > mx) mx = r.v;
     for (auto& r : rows) {
         sp.setTextColor(r.c, RDR_C_BG);
-        sp.setCursor(2, y); sp.printf("%-9s%6lu", r.n, (unsigned long)r.v);
+        sp.setCursor(2, y); sp.print(r.n);
+        sp.setCursor(62, y); sp.printf("%6lu", (unsigned long)r.v);
         int bw = (int)((RDR_W - 120) * r.v / mx);
         sp.fillRect(118, y, bw, 7, r.c);
         y += 11;
     }
-    rdrFooter(sp, "v:view  bk:back");
+    rdrFooter(sp, "v:切换视图  退格:返回");
 }
 static void rdrDrawList(LovyanGFX& sp) {
     int rows = 9, top = rdr_sel - rows / 2;
     if (top > rdr_orderCount - rows) top = rdr_orderCount - rows;
     if (top < 0) top = 0;
-    sp.setTextSize(1);
+    evilSetCnFont(sp, 1);
     for (int i = 0; i < rows; i++) {
         int oi = top + i; if (oi >= rdr_orderCount) break;
         RdrDev& d = rdr_dev[rdr_order[oi]];
@@ -675,19 +676,25 @@ static void rdrDrawList(LovyanGFX& sp) {
         uint16_t col = d.attack ? RDR_C_ATTACK : rdrFamColor(d.lastType, d.lastSub);
         sp.setTextColor(selrow ? RDR_C_SEL : col, selrow ? 0x1082 : RDR_C_BG);
         sp.setCursor(2, y);
-        const char* nm = d.hidden ? "<hidden>" : (d.ssid[0] ? d.ssid : "");
-        char tag[13];
-        if (nm[0]) snprintf(tag, sizeof(tag), "%.12s", nm);
-        else snprintf(tag, sizeof(tag), "%02X:%02X:%02X:%02X", d.mac[2], d.mac[3], d.mac[4], d.mac[5]);
-        sp.printf("%-13s%4d c%-2d %-4s%s%s", tag, (int)d.rssi, d.apChannel ? d.apChannel : d.channel,
+        const char* nm = d.hidden ? "<隐藏>" : (d.ssid[0] ? d.ssid : "");
+        String tag;
+        if (nm[0]) tag = evilUtf8ClipPx(sp, String(nm), 72);
+        else {
+            char macBuf[13];
+            snprintf(macBuf, sizeof(macBuf), "%02X:%02X:%02X:%02X", d.mac[2], d.mac[3], d.mac[4], d.mac[5]);
+            tag = macBuf;
+        }
+        sp.print(tag);
+        sp.setCursor(80, y);
+        sp.printf("%4d c%-2d %-4s%s%s", (int)d.rssi, d.apChannel ? d.apChannel : d.channel,
                   rdrEncName(d.enc), d.eapol ? "E" : "", d.attack ? "!" : "");
     }
-    rdrFooter(sp, ";. sel  ent:detail  v:view  bk:back");
+    rdrFooter(sp, ";.选择 OK:详情 v:视图 退格:返回");
 }
 static void rdrDrawChans(LovyanGFX& sp) {
-    sp.setTextSize(1);
+    evilSetCnFont(sp, 1);
     sp.setTextColor(RDR_C_FG, RDR_C_BG);
-    sp.setCursor(2, 13); sp.printf("Channels  minRSSI %d  %s", rdr_minRssi, rdr_paused ? "PAUSED" : "");
+    sp.setCursor(2, 13); sp.printf("信道分布  最小RSSI %d  %s", rdr_minRssi, rdr_paused ? "已暂停" : "");
     uint32_t mx = 1;
     for (int c = 1; c <= 13; c++) if (rdr_chanFrames[c] > mx) mx = rdr_chanFrames[c];
     int x0 = 6, bw = 16, base = RDR_H - 14;
@@ -698,7 +705,7 @@ static void rdrDrawChans(LovyanGFX& sp) {
         sp.setTextColor(c == rdr_channel ? RDR_C_SEL : RDR_C_DIM, RDR_C_BG);
         sp.setCursor(x, base + 1); sp.printf("%d", c);
     }
-    rdrFooter(sp, ";. rssi  ent:pause  c:ctrl  v:view");
+    rdrFooter(sp, ";.阈值 OK:暂停 c:控制帧 v:视图");
 }
 static void rdrDrawBle(LovyanGFX& sp) {
     const int cx = 62, cy = 72; const float R = 52;
@@ -718,7 +725,7 @@ static void rdrDrawBle(LovyanGFX& sp) {
     }
     // nearest few by RSSI (simple top list)
     int x = 122, y = 14, shown = 0;
-    sp.setTextSize(1);
+    evilSetCnFont(sp, 1);
     for (int pass = 0; pass < 6 && shown < 6; pass++) {
         int best = -1; float br = -200;
         for (int i = 0; i < rdr_bleCount; i++) {
@@ -732,42 +739,47 @@ static void rdrDrawBle(LovyanGFX& sp) {
         RdrBle& b = rdr_ble[best];
         sp.setTextColor(b.randomAddr ? RDR_C_PROBE : RDR_C_BEACON, RDR_C_BG);
         sp.setCursor(x, y + shown * 11);
-        if (b.haveName && b.name[0]) sp.printf("%.9s %d", b.name, (int)b.rssi);
+        if (b.haveName && b.name[0]) {
+            String bnm = evilUtf8ClipPx(sp, String(b.name), 54);
+            sp.printf("%s %d", bnm.c_str(), (int)b.rssi);
+        }
         else sp.printf("%02X%02X %d", b.addr[4], b.addr[5], (int)b.rssi);
         shown++;
     }
     portEXIT_CRITICAL(&rdr_bleMux);
-    rdrFooter(sp, "passive BLE scan   p:pcap   bk:exit");
+    rdrFooter(sp, "BLE被动扫描   p:抓包   退格:退出");
 }
 static void rdrDrawDetail(LovyanGFX& sp) {
     int idx = -1;
     if (rdr_haveDetail) for (int i = 0; i < rdr_devCount; i++) if (!memcmp(rdr_dev[i].mac, rdr_detailMac, 6)) { idx = i; break; }
-    sp.setTextSize(1);
-    if (idx < 0) { sp.setTextColor(RDR_C_DIM, RDR_C_BG); sp.setCursor(4, 50); sp.print("device lost"); rdrFooter(sp, "bk back"); return; }
+    evilSetCnFont(sp, 1);
+    if (idx < 0) { sp.setTextColor(RDR_C_DIM, RDR_C_BG); sp.setCursor(4, 50); sp.print("设备已丢失"); rdrFooter(sp, "退格:返回"); return; }
     RdrDev& d = rdr_dev[idx];
     int y = 14;
-    sp.setTextColor(RDR_C_SEL, RDR_C_BG);  sp.setCursor(2, y); sp.printf("%s", d.hidden ? "<hidden>" : (d.ssid[0] ? d.ssid : "(no SSID)")); y += 12;
+    sp.setTextColor(RDR_C_SEL, RDR_C_BG);  sp.setCursor(2, y);
+    String ssidLabel = d.hidden ? String("<隐藏SSID>") : (d.ssid[0] ? evilUtf8ClipPx(sp, String(d.ssid), RDR_W - 4) : String("(无SSID)"));
+    sp.print(ssidLabel); y += 12;
     sp.setTextColor(RDR_C_FG, RDR_C_BG);
     sp.setCursor(2, y); sp.printf("%02X:%02X:%02X:%02X:%02X:%02X", d.mac[0],d.mac[1],d.mac[2],d.mac[3],d.mac[4],d.mac[5]); y += 11;
-    sp.setCursor(2, y); sp.printf("RSSI %ddBm  ch %d (rx%d)", (int)d.rssi, d.apChannel ? d.apChannel : d.channel, d.channel); y += 11;
-    sp.setCursor(2, y); sp.printf("Enc %s   Frames %lu", rdrEncName(d.enc), (unsigned long)d.frames); y += 11;
-    sp.setCursor(2, y); sp.printf("mgmt %u ctrl %u data %u atk %u", d.fam[0], d.fam[1], d.fam[2], d.fam[3]); y += 11;
+    sp.setCursor(2, y); sp.printf("信号 %ddBm  信道 %d (接收%d)", (int)d.rssi, d.apChannel ? d.apChannel : d.channel, d.channel); y += 11;
+    sp.setCursor(2, y); sp.printf("加密 %s   帧数 %lu", rdrEncName(d.enc), (unsigned long)d.frames); y += 11;
+    sp.setCursor(2, y); sp.printf("管理 %u 控制 %u 数据 %u 攻击 %u", d.fam[0], d.fam[1], d.fam[2], d.fam[3]); y += 11;
     if (d.eapol) {
         sp.setTextColor(RDR_C_DATA, RDR_C_BG); sp.setCursor(2, y);
-        sp.printf("EAPOL M1%c M2%c M3%c M4%c",
+        sp.printf("EAPOL握手 M1%c M2%c M3%c M4%c",
                   d.eapolMsgs&1?'+':'-', d.eapolMsgs&2?'+':'-', d.eapolMsgs&4?'+':'-', d.eapolMsgs&8?'+':'-'); y += 11;
     }
     if (d.attack && d.hasTarget) {
         sp.setTextColor(RDR_C_ATTACK, RDR_C_BG); sp.setCursor(2, y);
-        sp.printf("ATK -> %02X:%02X:%02X:%02X:%02X:%02X", d.target[0],d.target[1],d.target[2],d.target[3],d.target[4],d.target[5]);
+        sp.printf("攻击目标 -> %02X:%02X:%02X:%02X:%02X:%02X", d.target[0],d.target[1],d.target[2],d.target[3],d.target[4],d.target[5]);
     }
-    rdrFooter(sp, ";. next  ent lock  bk back");
+    rdrFooter(sp, ";.切换  OK:锁信道  退格:返回");
 }
 static void rdrDrawSplash(LovyanGFX& sp) {
     sp.setTextColor(RDR_C_FG, RDR_C_BG);
-    sp.setTextSize(2); sp.setCursor(44, 48); sp.print("WiFi RADAR");
-    sp.setTextSize(1); sp.setTextColor(RDR_C_DIM, RDR_C_BG);
-    sp.setCursor(40, 76); sp.print("passive 802.11 + BLE scouter");
+    evilSetCnFont(sp, 2); sp.setCursor(44, 48); sp.print("WiFi 雷达");
+    evilSetCnFont(sp, 1); sp.setTextColor(RDR_C_DIM, RDR_C_BG);
+    sp.setCursor(40, 76); sp.print("802.11 + BLE 被动扫描仪");
 }
 static void rdrRender(M5Canvas* spr, bool use_sprite) {
     LovyanGFX& sp = use_sprite ? (LovyanGFX&)*spr : (LovyanGFX&)M5.Display;
@@ -893,7 +905,7 @@ void wifiRadarMenu() {
     // allocate working set on entry (freed on exit) - nothing reserved at boot
     rdr_dev = (RdrDev*)calloc(RDR_MAX_DEV, sizeof(RdrDev));
     rdr_ble = nullptr;                   // BLE table only used by bleRadarMenu
-    if (!rdr_dev) { waitAndReturnToMenu("WiFi Radar: out of memory"); return; }
+    if (!rdr_dev) { waitAndReturnToMenu("WiFi雷达: 内存不足"); return; }
     rdr_devCount = 0; rdr_bleCount = 0; rdr_orderCount = 0; rdr_sel = 0;
     rdr_totalFrames = rdr_attackCount = 0; rdr_dropped = rdr_pcapDropped = 0;
     memset(rdr_sub, 0, sizeof(rdr_sub)); memset(rdr_chanFrames, 0, sizeof(rdr_chanFrames)); memset(rdr_chanAtk, 0, sizeof(rdr_chanAtk));
@@ -942,6 +954,6 @@ void wifiRadarMenu() {
     free(rdr_dev); rdr_dev = nullptr;   // sprite is kept (rdr_spr) for reuse
 
     if (rdr_quit) { inMenu = true; M5.Display.clear(); }   // serial Q: silent return to menu
-    else waitAndReturnToMenu("WiFi Radar stopped");
+    else waitAndReturnToMenu("WiFi雷达已停止");
 }
 
