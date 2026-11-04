@@ -7,6 +7,15 @@ echo ========================================================
 set PROJECT_DIR=%~dp0
 cd /d "%PROJECT_DIR%"
 
+if not exist ".pio_cardputer" mkdir ".pio_cardputer"
+if not exist ".pio_cardputer\Evil-Cardputer-v1-5-7.ino" (
+    cmd /c mklink /H ".pio_cardputer\Evil-Cardputer-v1-5-7.ino" "Evil-Cardputer-v1-5-7.ino" >nul 2>nul
+    if not exist ".pio_cardputer\Evil-Cardputer-v1-5-7.ino" copy /y "Evil-Cardputer-v1-5-7.ino" ".pio_cardputer\Evil-Cardputer-v1-5-7.ino" >nul
+)
+if not exist ".pio_cardputer\utilities" (
+    cmd /c mklink /J ".pio_cardputer\utilities" "utilities" >nul 2>nul
+)
+
 echo [1/3] 正在启动 PlatformIO 进行增量/全量编译...
 pio run
 if %ERRORLEVEL% neq 0 (

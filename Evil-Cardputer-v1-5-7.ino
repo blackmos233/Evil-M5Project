@@ -34968,8 +34968,16 @@ bool ow_checkInternet() {
 
   HTTPClient http;
   http.setTimeout(2000);
-  http.begin("http://clients3.google.com/generate_204");
+  // 中国大陆高可用连通性测试 (华为平台 generate_204)
+  http.begin("http://connectivitycheck.platform.hicloud.com/generate_204");
   int code = http.GET();
+  http.end();
+
+  if (code == 204) return true;
+
+  // 备用国内探测 (小米 MIUI generate_204)
+  http.begin("http://connect.rom.miui.com/generate_204");
+  code = http.GET();
   http.end();
 
   return (code == 204);
