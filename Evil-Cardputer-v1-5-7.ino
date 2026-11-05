@@ -21418,9 +21418,8 @@ void evilLLMChatStream() {
     String currentLine = "";
     int scrollOffset = 0;
     bool gotFirstToken = false;
+    bool isThinking = false;
     unsigned long streamStart = millis();
-
-    M5.Display.clear();
 
     while (client.connected()) {
       M5.update();
@@ -21434,7 +21433,7 @@ void evilLLMChatStream() {
       }
 
       // 超时判定
-      if (!gotFirstToken && millis() - streamStart > 15000) {
+      if (!gotFirstToken && millis() - streamStart > 20000) {
         client.stop();
         waitAndReturnToMenu("大模型响应超时");
         return;
@@ -21464,19 +21463,34 @@ void evilLLMChatStream() {
       // 1. OpenAI 格式: choices[0].delta.content
       if (doc["choices"].is<JsonArray>() && doc["choices"].size() > 0) {
         JsonObject choice0 = doc["choices"][0];
-        if (choice0["delta"].is<JsonObject>() && choice0["delta"].containsKey("content")) {
-          token = choice0["delta"]["content"].as<String>();
-        } else if (choice0.containsKey("text")) {
+        if (choice0["delta"].is<JsonObject>()) {
+          JsonObject delta = choice0["delta"];
+          if (delta.containsKey("content") && !delta["content"].isNull()) {
+            token = delta["content"].as<String>();
+          } else if (delta.containsKey("reasoning_content") && !delta["reasoning_content"].isNull()) {
+            if (!isThinking && !gotFirstToken) {
+              isThinking = true;
+              M5.Display.setCursor(4, 25);
+              M5.Display.println("AI 正在思考中...");
+            }
+            continue;
+          }
+        } else if (choice0.containsKey("text") && !choice0["text"].isNull()) {
           token = choice0["text"].as<String>();
         }
       }
       // 2. 兼容 Ollama 原生格式: response
-      else if (doc.containsKey("response")) {
+      else if (doc.containsKey("response") && !doc["response"].isNull()) {
         token = doc["response"].as<String>();
       }
 
-      if (token.length() == 0) continue;
-      gotFirstToken = true;
+      // 严密防御：绝不允许 "null" 字符串或空内容进入排版
+      if (token == "null" || token.length() == 0) continue;
+
+      if (!gotFirstToken) {
+        gotFirstToken = true;
+        M5.Display.clear();
+      }
 
       // UTF-8 字符流切分与排版（杜绝汉字三字节截断乱码）
       size_t idx = 0;
