@@ -1300,10 +1300,10 @@ String discordWebhookURL = "";
 
 String llmHost        = "";
 int    llmhttpsPort   = 443;
-String llmapiPath     = "/evilOllama/api/generate";
+String llmapiPath     = "/v1/chat/completions";
 String llmUser        = "";
 String llmPass        = "";
-String llmModel       = "tinyllama";
+String llmModel       = "gpt-4o-mini";
 int    llmMaxTokens   = 512;
 
 char currentNick[16] = "";
@@ -9080,13 +9080,13 @@ void restoreConfigParameter(String key) {
         } else if (key == "llm_port") {
           llmhttpsPort = 443;
         } else if (key == "llm_api_path") {
-          llmapiPath = "/evilOllama/api/generate";
+          llmapiPath = "/v1/chat/completions";
         } else if (key == "llm_user") {
           llmUser = "";
         } else if (key == "llm_pass") {
           llmPass = "";
         } else if (key == "llm_model") {
-          llmModel = "tinyllama";
+          llmModel = "gpt-4o-mini";
         } else if (key == "llm_max_tokens") {
           llmMaxTokens = 256;
         } else if (key == "evilChatNickname") {
@@ -9142,13 +9142,13 @@ void restoreConfigParameter(String key) {
     } else if (key == "llm_port") {
       llmhttpsPort = 443;
     } else if (key == "llm_api_path") {
-      llmapiPath = "/evilOllama/api/generate";
+      llmapiPath = "/v1/chat/completions";
     } else if (key == "llm_user") {
       llmUser = "";
     } else if (key == "llm_pass") {
       llmPass = "";
     } else if (key == "llm_model") {
-      llmModel = "tinyllama";
+      llmModel = "gpt-4o-mini";
     } else if (key == "llm_max_tokens") {
       llmMaxTokens = 256;
     } else if (key == "evilChatNickname") {
@@ -21302,6 +21302,25 @@ String encodeBase64(const String& input) {
   return output;
 }
 
+static String evilJsonEscape(const String& str) {
+  String out = "";
+  out.reserve(str.length() + 16);
+  for (size_t i = 0; i < str.length(); i++) {
+    char c = str[i];
+    switch (c) {
+      case '"':  out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:   out += c;      break;
+    }
+  }
+  return out;
+}
+
 void evilLLMChatStream() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
     Serial.println(F("[INFO] Not connected to a network."));
@@ -21310,56 +21329,89 @@ void evilLLMChatStream() {
   }
 
   inMenu = false;
+  evilSetCnFont(M5.Display, 1.0);
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
 
-  const int charWidth = 8;
-  const int lineHeight = 13;
-  const int screenWidth = 208;
-  const int linesPerPage = 9;
-
-  M5.Display.clear();
-  M5.Display.setCursor(5, 5);
-  M5.Display.println("输入提示词 >");
+  const int lineHeight = 14;
+  const int screenWidth = 232;
+  const int linesPerPage = 8;
 
   while (true) {
+    M5.Display.clear();
+    evilSetCnFont(M5.Display, 1.0);
+    M5.Display.setCursor(4, 5);
+    M5.Display.println("输入提示词 >");
+
     String userPrompt = getUserInput("Prompt > ");
     if (userPrompt.length() == 0) continue;
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(10000);
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
+    WiFiClient* clientPtr = nullptr;
 
-    if (!client.connect(llmHost.c_str(), llmhttpsPort)) {
-      waitAndReturnToMenu("连接服务器失败。");
-      return;
+    bool isHttps = (llmhttpsPort == 443);
+    if (isHttps) {
+      secureClient.setInsecure();
+      secureClient.setTimeout(15000);
+      if (!secureClient.connect(llmHost.c_str(), llmhttpsPort)) {
+        waitAndReturnToMenu("连接服务器失败。");
+        return;
+      }
+      clientPtr = &secureClient;
+    } else {
+      plainClient.setTimeout(15000);
+      if (!plainClient.connect(llmHost.c_str(), llmhttpsPort)) {
+        waitAndReturnToMenu("连接服务器失败。");
+        return;
+      }
+      clientPtr = &plainClient;
     }
+    WiFiClient& client = *clientPtr;
 
+    // 中文系统人设注入 + 用户提示词转义
+    String systemPrompt = "你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。";
+    String escapedSystem = evilJsonEscape(systemPrompt);
+    String escapedUser   = evilJsonEscape(userPrompt);
+
+    // 标准 OpenAI Chat Completions JSON 请求体
     String requestBody =
-      "{\"model\":\"" + llmModel +
-      "\",\"prompt\":\"" + userPrompt +
-      "\",\"stream\":true,\"options\":{\"num_predict\":" + String(llmMaxTokens) + "}}";
+      "{\"model\":\"" + llmModel + "\"," +
+      "\"messages\":[" +
+        "{\"role\":\"system\",\"content\":\"" + escapedSystem + "\"}," +
+        "{\"role\":\"user\",\"content\":\"" + escapedUser + "\"}" +
+      "]," +
+      "\"stream\":true," +
+      "\"max_tokens\":" + String(llmMaxTokens) + "}";
 
-    String authRaw = llmUser + ":" + llmPass;
-    String authB64 = encodeBase64(authRaw);
+    String authHeader = "";
+    String tokenKey = (llmPass.length() > 0) ? llmPass : llmUser;
+    if (tokenKey.length() > 0) {
+      authHeader = "Authorization: Bearer " + tokenKey + "\r\n";
+    }
 
     String request =
       "POST " + llmapiPath + " HTTP/1.1\r\n" +
       "Host: " + llmHost + "\r\n" +
-      "Authorization: Basic " + authB64 + "\r\n" +
+      authHeader +
       "Content-Type: application/json\r\n" +
+      "Accept: text/event-stream\r\n" +
       "Content-Length: " + String(requestBody.length()) + "\r\n" +
       "Connection: close\r\n\r\n" +
       requestBody;
 
     M5.Display.clear();
-    M5.Display.setCursor(5, 5);
+    evilSetCnFont(M5.Display, 1.0);
+    M5.Display.setCursor(4, 5);
     M5.Display.println("已发送。");
     M5.Display.println("等待AI回复...");
 
     client.print(request);
 
+    // 跳过 HTTP 响应头
     while (client.connected() && !kp(KEY_BACKSPACE)) {
       String line = client.readStringUntil('\n');
-      if (line == "\r") break;
+      line.trim();
+      if (line.length() == 0) break;
     }
 
     std::vector<String> lines;
@@ -21374,122 +21426,138 @@ void evilLLMChatStream() {
       M5.update();
       cardUpdate();
 
-      // Interruption utilisateur
+      // 用户中断
       if (kp(KEY_BACKSPACE)) {
         client.stop();
-        waitAndReturnToMenu("用户中断了流式传输");
+        waitAndReturnToMenu("用户中断了传输");
         return;
       }
 
-      // Timeout si aucun token received
-      if (!gotFirstToken && millis() - streamStart > 10000) {
+      // 超时判定
+      if (!gotFirstToken && millis() - streamStart > 15000) {
         client.stop();
-        waitAndReturnToMenu("大模型无响应 (超时)");
+        waitAndReturnToMenu("大模型响应超时");
         return;
-      }
-
-      // Scroll 
-      if (kp(';') && scrollOffset > 0) {
-        scrollOffset--;
-        M5.Display.clear();
-        for (int i = 0; i < linesPerPage; i++) {
-          int idx = scrollOffset + i;
-          if (idx < lines.size()) {
-            M5.Display.setCursor(5, 10 + i * lineHeight);
-            M5.Display.println(lines[idx]);
-          }
-        }
-        delay(150);
-        continue;
-      } else if (kp('.') && scrollOffset < lines.size()) {
-        scrollOffset++;
-        M5.Display.clear();
-        for (int i = 0; i < linesPerPage; i++) {
-          int idx = scrollOffset + i;
-          if (idx < lines.size()) {
-            M5.Display.setCursor(5, 10 + i * lineHeight);
-            M5.Display.println(lines[idx]);
-          }
-        }
-        delay(150);
-        continue;
       }
 
       String line = client.readStringUntil('\n');
       line.trim();
       if (line.length() == 0) continue;
+      if (line.startsWith(":")) continue; // SSE 注释行
 
-      StaticJsonDocument<512> doc;
-      DeserializationError err = deserializeJson(doc, line);
+      String payload = line;
+      if (payload.startsWith("data:")) {
+        payload = payload.substring(5);
+        payload.trim();
+      }
+
+      if (payload == "[DONE]") break;
+      if (payload.length() == 0) continue;
+
+      JsonDocument doc;
+      DeserializationError err = deserializeJson(doc, payload);
       if (err) continue;
+
       if (doc["done"] == true) break;
 
-      if (doc.containsKey("response")) {
-        gotFirstToken = true;
-        String token = doc["response"].as<String>();
-        token.replace("\\n", "\n");
+      String token = "";
+      // 1. OpenAI 格式: choices[0].delta.content
+      if (doc["choices"].is<JsonArray>() && doc["choices"].size() > 0) {
+        JsonObject choice0 = doc["choices"][0];
+        if (choice0["delta"].is<JsonObject>() && choice0["delta"].containsKey("content")) {
+          token = choice0["delta"]["content"].as<String>();
+        } else if (choice0.containsKey("text")) {
+          token = choice0["text"].as<String>();
+        }
+      }
+      // 2. 兼容 Ollama 原生格式: response
+      else if (doc.containsKey("response")) {
+        token = doc["response"].as<String>();
+      }
 
-        String word = "";
-        for (int i = 0; i <= token.length(); i++) {
-          char c = token[i];
-          bool isEnd = (i == token.length());
-          bool isSpace = (c == ' ' || c == '\n' || isEnd);
+      if (token.length() == 0) continue;
+      gotFirstToken = true;
 
-          if (!isEnd && !isSpace) {
-            word += c;
-            continue;
-          }
+      // UTF-8 字符流切分与排版（杜绝汉字三字节截断乱码）
+      size_t idx = 0;
+      while (idx < token.length()) {
+        unsigned char c = (unsigned char)token[idx];
+        int cLen = 1;
+        if ((c & 0x80) == 0) {
+          cLen = 1;
+        } else if ((c & 0xE0) == 0xC0) {
+          cLen = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+          cLen = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+          cLen = 4;
+        }
+        if (idx + cLen > token.length()) cLen = token.length() - idx;
+        String oneChar = token.substring(idx, idx + cLen);
+        idx += cLen;
 
-          int wordPixelLength = word.length() * charWidth;
-          int linePixelLength = currentLine.length() * charWidth;
-
-          if (linePixelLength + wordPixelLength > screenWidth) {
-            lines.push_back(currentLine);
-            currentLine = "";
-            linePixelLength = 0;
-          }
-
-          if (wordPixelLength > screenWidth) {
-            for (int j = 0; j < word.length(); j++) {
-              currentLine += word[j];
-              if ((currentLine.length() * charWidth) >= screenWidth) {
-                lines.push_back(currentLine);
-                currentLine = "";
-              }
-            }
-          } else {
-            currentLine += word;
-          }
-
-          if (!isEnd && c != '\n') currentLine += c;
-          if (c == '\n') {
-            lines.push_back(currentLine);
-            currentLine = "";
-          }
-
-          word = "";
+        if (oneChar == "\r") continue;
+        if (oneChar == "\n") {
+          lines.push_back(currentLine);
+          currentLine = "";
+          continue;
         }
 
-        if ((lines.size() - scrollOffset) < linesPerPage) {
-          M5.Display.clear();
-          for (int i = 0; i < linesPerPage; i++) {
-            int idx = scrollOffset + i;
-            if (idx < lines.size()) {
-              M5.Display.setCursor(5, 10 + i * lineHeight);
-              M5.Display.println(lines[idx]);
-            }
-          }
+        // 真实像素测量断行
+        if (M5.Display.textWidth(currentLine + oneChar) > screenWidth) {
+          lines.push_back(currentLine);
+          currentLine = oneChar;
+        } else {
+          currentLine += oneChar;
+        }
+      }
 
-          if (currentLine.length() > 0) {
-            M5.Display.setCursor(5, 10 + (lines.size() - scrollOffset) * lineHeight);
-            M5.Display.println(currentLine);
-          }
+      // 实时流式自动滚屏刷新
+      int totalLines = lines.size() + (currentLine.length() > 0 ? 1 : 0);
+      if (totalLines > linesPerPage) {
+        scrollOffset = totalLines - linesPerPage;
+      } else {
+        scrollOffset = 0;
+      }
+
+      M5.Display.clear();
+      for (int i = 0; i < linesPerPage; i++) {
+        int lIdx = scrollOffset + i;
+        if (lIdx < lines.size()) {
+          M5.Display.setCursor(4, 4 + i * lineHeight);
+          M5.Display.println(lines[lIdx]);
+        } else if (lIdx == lines.size() && currentLine.length() > 0) {
+          M5.Display.setCursor(4, 4 + i * lineHeight);
+          M5.Display.println(currentLine);
         }
       }
     }
 
-    if (currentLine.length() > 0) lines.push_back(currentLine);
-    lines.push_back("______");
+    if (currentLine.length() > 0) {
+      lines.push_back(currentLine);
+      currentLine = "";
+    }
+    lines.push_back("[完成 - 回车再问 / 退格退出]");
+
+    // 滚屏到底部
+    if (lines.size() > linesPerPage) {
+      scrollOffset = lines.size() - linesPerPage;
+    } else {
+      scrollOffset = 0;
+    }
+
+    auto renderLines = [&]() {
+      M5.Display.clear();
+      for (int i = 0; i < linesPerPage; i++) {
+        int lIdx = scrollOffset + i;
+        if (lIdx < lines.size()) {
+          M5.Display.setCursor(4, 4 + i * lineHeight);
+          M5.Display.println(lines[lIdx]);
+        }
+      }
+    };
+
+    renderLines();
 
     while (true) {
       M5.update();
@@ -21499,27 +21567,17 @@ void evilLLMChatStream() {
         waitAndReturnToMenu("大模型终端已停止");
         return;
       } else if (kp(KEY_ENTER)) {
-        M5.Display.clear();
-        M5.Display.setCursor(5, 5);
-        M5.Display.println("输入提示词 >");
         break;
       } else if (kp(';') && scrollOffset > 0) {
         scrollOffset--;
-        M5.Display.clear();
-      } else if (kp('.') && scrollOffset < lines.size()) {
+        renderLines();
+        delay(120);
+      } else if (kp('.') && (scrollOffset + linesPerPage) < lines.size()) {
         scrollOffset++;
-        M5.Display.clear();
+        renderLines();
+        delay(120);
       }
-
-      for (int i = 0; i < linesPerPage; i++) {
-        int idx = scrollOffset + i;
-        if (idx < lines.size()) {
-          M5.Display.setCursor(5, 10 + i * lineHeight);
-          M5.Display.println(lines[idx]);
-        }
-      }
-
-      delay(100);
+      delay(20);
     }
   }
 }
