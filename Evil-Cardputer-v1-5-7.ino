@@ -1305,6 +1305,8 @@ String llmUser        = "";
 String llmPass        = "";
 String llmModel       = "gpt-4o-mini";
 int    llmMaxTokens   = 512;
+String llmSystemPrompt = "你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。";
+const char* savedWifiFilePath = "/evil/config/saved_wifi.txt";
 
 char currentNick[16] = "";
 
@@ -8999,6 +9001,9 @@ void restoreConfigParameter(String key) {
             intValue = stringValue.toInt();
             llmMaxTokens = intValue;
             Serial.println("LLM Max Tokens restored to " + String(intValue));
+          } else if (key == "llm_system_prompt" || key == "llm_prompt") {
+            llmSystemPrompt = stringValue;
+            Serial.println("LLM System Prompt restored to " + stringValue);
           } else if (key == "evilChatNickname") {
             stringValue.toCharArray(currentNick, sizeof(currentNick));
             Serial.println("Nickname restored to " + String(currentNick));
@@ -9089,6 +9094,8 @@ void restoreConfigParameter(String key) {
           llmModel = "gpt-4o-mini";
         } else if (key == "llm_max_tokens") {
           llmMaxTokens = 256;
+        } else if (key == "llm_system_prompt" || key == "llm_prompt") {
+          llmSystemPrompt = "你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。";
         } else if (key == "evilChatNickname") {
           snprintf(currentNick, sizeof(currentNick), "noname%04d", random(0, 10000));
           currentNick[sizeof(currentNick) - 1] = '\0';
@@ -9151,6 +9158,8 @@ void restoreConfigParameter(String key) {
       llmModel = "gpt-4o-mini";
     } else if (key == "llm_max_tokens") {
       llmMaxTokens = 256;
+    } else if (key == "llm_system_prompt" || key == "llm_prompt") {
+      llmSystemPrompt = "你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。";
     } else if (key == "evilChatNickname") {
       snprintf(currentNick, sizeof(currentNick), "noname%04d", random(0, 10000));
       currentNick[sizeof(currentNick) - 1] = '\0';
@@ -13576,11 +13585,105 @@ Connect to wifi
 ============================================================================================================================
 */
 
+// 从 SD 卡 /evil/config/saved_wifi.txt 或 config.txt 检索已保存密码
+String getSavedWifiPassword(const String& targetSsid) {
+  if (targetSsid.length() == 0) return "";
+
+  // 1. 优先从 /evil/config/saved_wifi.txt 检索
+  if (SD.exists(savedWifiFilePath)) {
+    File f = SD.open(savedWifiFilePath, FILE_READ);
+    if (f) {
+      while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0 || line.startsWith("#")) continue;
+        int eq = line.indexOf('=');
+        if (eq > 0) {
+          String s = line.substring(0, eq);
+          s.trim();
+          if (s == targetSsid) {
+            String p = line.substring(eq + 1);
+            p.trim();
+            f.close();
+            Serial.println("[WIFI] Found saved password in saved_wifi.txt for: " + targetSsid);
+            return p;
+          }
+        }
+      }
+      f.close();
+    }
+  }
+
+  // 2. 检查当前 config.txt 中的 wifi_ssid 与 wifi_password
+  if (ssid == targetSsid && password.length() > 0) {
+    return password;
+  }
+
+  return "";
+}
+
+// 保存成功连接过的 WiFi 密码到 SD 卡
+void saveWifiCredentials(const String& newSsid, const String& newPassword) {
+  if (newSsid.length() == 0) return;
+
+  ssid = newSsid;
+  password = newPassword;
+
+  // 1. 同步保存到 config.txt 作为最后一次连接的网络
+  saveConfigString("wifi_ssid", newSsid);
+  saveConfigString("wifi_password", newPassword);
+
+  // 2. 保存/更新到 /evil/config/saved_wifi.txt 历史网络记录
+  if (!SD.exists(configFolderPath)) {
+    SD.mkdir(configFolderPath);
+  }
+
+  String content = "";
+  bool found = false;
+
+  if (SD.exists(savedWifiFilePath)) {
+    File f = SD.open(savedWifiFilePath, FILE_READ);
+    if (f) {
+      while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        int eq = line.indexOf('=');
+        if (eq > 0) {
+          String s = line.substring(0, eq);
+          s.trim();
+          if (s == newSsid) {
+            content += newSsid + "=" + newPassword + "\n";
+            found = true;
+            continue;
+          }
+        }
+        content += line + "\n";
+      }
+      f.close();
+    }
+  }
+
+  if (!found) {
+    content += newSsid + "=" + newPassword + "\n";
+  }
+
+  File outFile = SD.open(savedWifiFilePath, FILE_WRITE);
+  if (outFile) {
+    outFile.print(content);
+    outFile.close();
+    Serial.println("[WIFI] Saved credentials to " + String(savedWifiFilePath));
+  } else {
+    Serial.println(F("[WIFI] Error opening saved_wifi.txt for writing"));
+  }
+}
+
 // Fonction pour se connecter au Wi-Fi
 bool connectToWiFi(const String& ssid, const String& password) {
   WiFi.begin(ssid.c_str(), password.c_str());
 
   M5.Display.clear();
+  evilSetCnFont(M5.Display, 1.0);
   M5.Display.setCursor(5, 10);
   M5.Display.println("正在连接WiFi...");
   M5.Display.display();
@@ -13604,7 +13707,7 @@ bool connectToWiFi(const String& ssid, const String& password) {
     M5.Display.setCursor(5, 30);
     M5.Display.println("IP: " + WiFi.localIP().toString());
     M5.Display.display();
-    delay(2000); // Affiche le message pendant 2 secondes
+    delay(2000);
     return true;
   } else {
     Serial.println(F("Failed to connect to WiFi."));
@@ -13614,7 +13717,7 @@ bool connectToWiFi(const String& ssid, const String& password) {
     M5.Display.setCursor(5, 30);
     M5.Display.println("请重试");
     M5.Display.display();
-    delay(2000); // Affiche le message pendant 2 secondes
+    delay(2000);
     return false;
   }
 }
@@ -13641,39 +13744,60 @@ void connectWifi(int networkIndex) {
   Serial.print(F("Selected network SSID: "));
   Serial.println(nameSSID);
 
-  // Si le réseau est ouvert, passer directement à la connexion
+  // 1. 开放式网络直接连
   if (getWifiSecurity(networkIndex) == "Open") {
     Serial.println(F("Network is open, no password required."));
     if (connectToWiFi(nameSSID, "")) {
+      saveWifiCredentials(nameSSID, "");
       waitAndReturnToMenu("已连接WiFi: " + nameSSID);
-      ssid = nameSSID; // Stocke le SSID sélectionné
     } else {
       waitAndReturnToMenu("连接WiFi失败: " + nameSSID);
     }
     return;
   }
   
-  // Vérifier si le SSID est déjà enregistré
-  if (ssid == nameSSID) {
-    Serial.println(F("Previously connected to this network. Trying saved password..."));
-    if (connectToWiFi(nameSSID, password)) {
+  // 2. 检查是否有已保存的密码（优先自动读取）
+  String savedPass = getSavedWifiPassword(nameSSID);
+  if (savedPass.length() > 0) {
+    Serial.println(F("Found saved password for this network, attempting connection..."));
+    M5.Display.clear();
+    evilSetCnFont(M5.Display, 1.0);
+    M5.Display.setCursor(5, 10);
+    M5.Display.println("使用已存密码连接...");
+    M5.Display.setCursor(5, 28);
+    M5.Display.println(nameSSID);
+    M5.Display.display();
+
+    if (connectToWiFi(nameSSID, savedPass)) {
+      saveWifiCredentials(nameSSID, savedPass);
       waitAndReturnToMenu("已连接WiFi: " + nameSSID);
       return;
     } else {
-      Serial.println(F("Failed to connect with saved password, asking for a new one..."));
+      Serial.println(F("Saved password failed or changed, asking for new one..."));
+      M5.Display.clear();
+      evilSetCnFont(M5.Display, 1.0);
+      M5.Display.setCursor(5, 10);
+      M5.Display.println("已存密码连接失败");
+      M5.Display.setCursor(5, 28);
+      M5.Display.println("请重新输入密码");
+      M5.Display.display();
+      delay(1500);
     }
   }
 
-  // Demander le mot de passe pour les réseaux sécurisés
+  // 3. 手动输入新密码
   M5.Display.clear();
+  evilSetCnFont(M5.Display, 1.0);
   M5.Display.setCursor(5, 10);
   M5.Display.println("输入 " + nameSSID + " 密码:");
   M5.Display.display();
   enterDebounce();
   typedPassword = getUserInput(false, true);
+
   Serial.print(F("Attempting to connect to WiFi with password: ")); Serial.println(typedPassword);
   if (connectToWiFi(nameSSID, typedPassword)) {
-    waitAndReturnToMenu("已连接WiFi: " + nameSSID); ssid = nameSSID; password = typedPassword;
+    saveWifiCredentials(nameSSID, typedPassword);
+    waitAndReturnToMenu("已连接并保存密码: " + nameSSID);
   } else {
     waitAndReturnToMenu("连接WiFi失败: " + nameSSID);
   }
@@ -21321,6 +21445,88 @@ static String evilJsonEscape(const String& str) {
   return out;
 }
 
+// 专属 LLM 提示词输入函数（无字符时按 Del 退出）
+static String getLLMPromptInput() {
+  String input = "";
+  evilSetCnFont(M5.Display, 1.0);
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5.Display.setCursor(4, 30);
+  M5.Display.print("Prompt: ");
+  
+  while (true) {
+    cardUpdate();
+    M5.update();
+
+    if (M5Cardputer.Keyboard.isChange()) {
+      if (kpAny()) {
+        Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+
+        // 当没有输入字符时按 Del，返回取消标志 "\x1B"
+        if (status.del) {
+          if (input.length() == 0) {
+            return "\x1B";
+          } else {
+            input.remove(input.length() - 1);
+            M5.Display.setCursor(4, 30);
+            M5.Display.print("Prompt:                                     ");
+            M5.Display.setCursor(4, 30);
+            M5.Display.print("Prompt: " + input);
+            M5.Display.display();
+          }
+        }
+
+        for (auto i : status.word) {
+          input += i;
+        }
+
+        if (status.enter) {
+          return input;
+        }
+
+        M5.Display.setCursor(4, 30);
+        M5.Display.print("Prompt: " + input);
+        M5.Display.display();
+      }
+    }
+
+    if (navPendingAction == NAV_ENTER) {
+      navPendingAction = NAV_NONE;
+      return input;
+    } else if (navPendingAction == NAV_BACK) {
+      navPendingAction = NAV_NONE;
+      if (input.length() == 0) return "\x1B";
+      input.remove(input.length() - 1);
+      M5.Display.setCursor(4, 30);
+      M5.Display.print("Prompt:                                     ");
+      M5.Display.setCursor(4, 30);
+      M5.Display.print("Prompt: " + input);
+      M5.Display.display();
+    }
+
+    if (navPendingCharValid) {
+      uint8_t c = navPendingChar;
+      navPendingCharValid = false;
+      navPendingChar = 0;
+
+      if (c == KEY_BACKSPACE) {
+        if (input.length() == 0) return "\x1B";
+        input.remove(input.length() - 1);
+        M5.Display.setCursor(4, 30);
+        M5.Display.print("Prompt:                                     ");
+      } else if (c == KEY_ENTER) {
+        return input;
+      } else if (c >= 32 && c < 127) {
+        input += (char)c;
+      }
+      M5.Display.setCursor(4, 30);
+      M5.Display.print("Prompt: " + input);
+      M5.Display.display();
+    }
+
+    delay(20);
+  }
+}
+
 void evilLLMChatStream() {
   if (WiFi.localIP().toString() == "0.0.0.0") {
     Serial.println(F("[INFO] Not connected to a network."));
@@ -21339,10 +21545,15 @@ void evilLLMChatStream() {
   while (true) {
     M5.Display.clear();
     evilSetCnFont(M5.Display, 1.0);
-    M5.Display.setCursor(4, 5);
-    M5.Display.println("输入提示词 >");
+    M5.Display.setCursor(4, 8);
+    M5.Display.println("输入提示词 (无内容按Del退出):");
 
-    String userPrompt = getUserInput("Prompt > ");
+    String userPrompt = getLLMPromptInput();
+    if (userPrompt == "\x1B") {
+      waitAndReturnToMenu("已退出 AI 对话");
+      return;
+    }
+    userPrompt.trim();
     if (userPrompt.length() == 0) continue;
 
     WiFiClientSecure secureClient;
@@ -21368,9 +21579,13 @@ void evilLLMChatStream() {
     }
     WiFiClient& client = *clientPtr;
 
-    // 中文系统人设注入 + 用户提示词转义
-    String systemPrompt = "你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。";
-    String escapedSystem = evilJsonEscape(systemPrompt);
+    // 中文系统人设注入（优先使用 config.txt 中的 llm_system_prompt）
+    String activeSystemPrompt = llmSystemPrompt;
+    activeSystemPrompt.trim();
+    if (activeSystemPrompt.length() == 0) {
+      activeSystemPrompt = "你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。";
+    }
+    String escapedSystem = evilJsonEscape(activeSystemPrompt);
     String escapedUser   = evilJsonEscape(userPrompt);
 
     // 标准 OpenAI Chat Completions JSON 请求体

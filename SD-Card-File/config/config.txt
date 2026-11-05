@@ -27,6 +27,7 @@ llm_user=
 llm_pass=
 llm_model=gpt-4o-mini
 llm_max_tokens=256
+llm_system_prompt=你是一个随身AI助手，请务必始终使用简短、精炼的简体中文回答用户的问题。
 evilChatNickname=NoName
 cloned_ssid=Evil-Cardputer
 portal_file=/evil/sites/normal.html
