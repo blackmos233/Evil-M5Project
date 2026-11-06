@@ -324,6 +324,7 @@ void bleGattExplorerMenu();
 void lorawanSnifferMenu();
 void wifiRadarMenu();
 void smbDiscoverMenu();
+void evilDiceRoller();
 void smbSerialDiscover();                 // headless: list SMB (445) hosts over serial
 void smbSerialTest(const String& ipStr);  // headless: full SMB2 pipeline w/ verbose serial
 void smbSerialLs(const String& args);     // headless: list a dir on a share
@@ -534,6 +535,7 @@ static const char * const PROGMEM menuItemsEn[] = {
   "Cap LoRaWAN",
   "WiFi Radar",
   "SMB Explorer",
+  "Dice Roller",
   "Settings",
 };
 
@@ -637,6 +639,7 @@ static const char * const PROGMEM menuItems[] = {
   "LoRaWAN 嗅探器",
   "WiFi 空间雷达",
   "SMB 内网共享渗透",
+  "六面骰子",
   "系统设置",
 };
 
@@ -3114,7 +3117,8 @@ void executeMenuItem(int index) {
     case 96: lorawanSnifferMenu(); break;
     case 97: wifiRadarMenu(); break;
     case 98: smbDiscoverMenu(); break;
-    case 99: showSettingsMenu(); break;
+    case 99: evilDiceRoller(); break;
+    case 100: showSettingsMenu(); break;
   }
   isOperationInProgress = false;
 }
@@ -3146,6 +3150,178 @@ void keyRelease() {
     M5.update(); cardUpdate();
     if (!M5Cardputer.Keyboard.isPressed()) return;
     delay(10);
+  }
+}
+
+// ==================== 六面骰子（微信风格） ====================
+static void drawSingleDice(int val) {
+  const int dw = 64, dh = 64, r = 10;
+  const int x = (240 - dw) / 2; // 88
+  const int y = 25;
+  const int ox = x + dw / 2;   // 120
+  const int oy = y + dh / 2;   // 57
+  const int d = 16;
+
+  // 骰子立体微阴影
+  M5.Display.fillRoundRect(x + 2, y + 2, dw, dh, r, 0x2965);
+
+  // 骰子本体（高质感白底圆角矩形）
+  M5.Display.fillRoundRect(x, y, dw, dh, r, TFT_WHITE);
+  // 边框描边
+  M5.Display.drawRoundRect(x, y, dw, dh, r, 0xCE59);
+
+  // 微信/中式经典骰子配色：1点和4点为鲜红色，其余为深墨黑
+  const uint16_t redDot = 0xE800;   // 鲜红
+  const uint16_t blackDot = 0x18C3; // 深墨黑
+
+  auto drawDot = [&](int px, int py, int pr, uint16_t col) {
+    M5.Display.fillCircle(px, py, pr, col);
+  };
+
+  switch (val) {
+    case 1:
+      drawDot(ox, oy, 8, redDot);
+      break;
+    case 2:
+      drawDot(ox - d, oy - d, 5, blackDot);
+      drawDot(ox + d, oy + d, 5, blackDot);
+      break;
+    case 3:
+      drawDot(ox - d, oy - d, 5, blackDot);
+      drawDot(ox, oy, 5, blackDot);
+      drawDot(ox + d, oy + d, 5, blackDot);
+      break;
+    case 4:
+      drawDot(ox - d, oy - d, 5, redDot);
+      drawDot(ox + d, oy - d, 5, redDot);
+      drawDot(ox - d, oy + d, 5, redDot);
+      drawDot(ox + d, oy + d, 5, redDot);
+      break;
+    case 5:
+      drawDot(ox - d, oy - d, 5, blackDot);
+      drawDot(ox + d, oy - d, 5, blackDot);
+      drawDot(ox, oy, 5, redDot);
+      drawDot(ox - d, oy + d, 5, blackDot);
+      drawDot(ox + d, oy + d, 5, blackDot);
+      break;
+    case 6:
+      drawDot(ox - d, oy - d, 5, blackDot);
+      drawDot(ox - d, oy, 5, blackDot);
+      drawDot(ox - d, oy + d, 5, blackDot);
+      drawDot(ox + d, oy - d, 5, blackDot);
+      drawDot(ox + d, oy, 5, blackDot);
+      drawDot(ox + d, oy + d, 5, blackDot);
+      break;
+    default:
+      drawDot(ox, oy, 8, redDot);
+      break;
+  }
+}
+
+static void renderDiceScreen(int currentVal, bool isRolling) {
+  M5.Display.clear();
+
+  auto drawCenterCnText = [](const String& str, int y, uint16_t color) {
+    evilSetCnFont(M5.Display, 1.0);
+    M5.Display.setTextColor(color, TFT_BLACK);
+    int w = M5.Display.textWidth(str);
+    int x = max(2, (240 - w) / 2);
+    M5.Display.setCursor(x, y);
+    M5.Display.print(str);
+  };
+
+  // 顶部标题
+  drawCenterCnText("=== 六面骰子 ===", 5, TFT_CYAN);
+
+  // 绘制骰子本体
+  drawSingleDice(currentVal);
+
+  // 状态与点数文本
+  if (isRolling) {
+    drawCenterCnText("摇骰子中...", 96, TFT_YELLOW);
+  } else {
+    String tip = "点数: " + String(currentVal);
+    drawCenterCnText(tip, 96, TFT_WHITE);
+  }
+
+  // 底部按键提示
+  drawCenterCnText("[Enter] 掷骰子   [Del] 退出", 117, TFT_LIGHTGRAY);
+  M5.Display.display();
+}
+
+void evilDiceRoller() {
+  inMenu = false;
+  enterDebounce();
+
+  int currentVal = 1; // 点进去之后默认是1
+  renderDiceScreen(currentVal, false);
+
+  while (true) {
+    M5.update();
+    cardUpdate();
+
+    bool triggerRoll = false;
+    bool triggerExit = false;
+
+    if (M5Cardputer.Keyboard.isChange() && kpAny()) {
+      Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+      if (status.del) {
+        triggerExit = true;
+      } else if (status.enter) {
+        triggerRoll = true;
+      }
+    }
+
+    if (navPendingAction == NAV_BACK) {
+      navPendingAction = NAV_NONE;
+      triggerExit = true;
+    } else if (navPendingAction == NAV_ENTER) {
+      navPendingAction = NAV_NONE;
+      triggerRoll = true;
+    }
+
+    if (navPendingCharValid) {
+      uint8_t c = navPendingChar;
+      navPendingCharValid = false;
+      navPendingChar = 0;
+      if (c == KEY_BACKSPACE) {
+        triggerExit = true;
+      } else if (c == KEY_ENTER || c == '\n' || c == '\r') {
+        triggerRoll = true;
+      }
+    }
+
+    if (triggerExit) {
+      backDebounce();
+      inMenu = true;
+      drawMenu();
+      return;
+    }
+
+    if (triggerRoll) {
+      enterDebounce();
+      renderDiceScreen(currentVal, true);
+
+      // 像微信骰子一样的减速翻滚跳变动画
+      int steps = 12;
+      int prevVal = currentVal;
+      for (int i = 0; i < steps; i++) {
+        int temp = random(1, 7);
+        while (temp == prevVal) temp = random(1, 7);
+        prevVal = temp;
+        drawSingleDice(temp);
+        M5.Display.display();
+        int delayMs = 30 + (i * 8);
+        delay(delayMs);
+        M5.update();
+        cardUpdate();
+      }
+
+      currentVal = random(1, 7);
+      renderDiceScreen(currentVal, false);
+    }
+
+    delay(20);
   }
 }
 
