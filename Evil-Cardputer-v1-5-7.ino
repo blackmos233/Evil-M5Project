@@ -535,7 +535,7 @@ static const char * const PROGMEM menuItemsEn[] = {
   "Cap LoRaWAN",
   "WiFi Radar",
   "SMB Explorer",
-  "Dice Roller",
+  "TRPG Dice",
   "Settings",
 };
 
@@ -639,7 +639,7 @@ static const char * const PROGMEM menuItems[] = {
   "LoRaWAN 嗅探器",
   "WiFi 空间雷达",
   "SMB 内网共享渗透",
-  "六面骰子",
+  "跑团骰子",
   "系统设置",
 };
 
@@ -3153,24 +3153,64 @@ void keyRelease() {
   }
 }
 
-// ==================== 六面骰子（微信风格） ====================
+// ==================== 跑团骰子（支持 ^\s*(\d+)?[dD](\d+)\s*$ 表达式） ====================
+static bool parseDiceNotation(const String& input, int& outCount, int& outSides) {
+  String s = input;
+  s.trim();
+  if (s.length() == 0) return false;
+
+  int dPos = -1;
+  for (size_t i = 0; i < s.length(); i++) {
+    if (s[i] == 'd' || s[i] == 'D') {
+      dPos = i;
+      break;
+    }
+  }
+  if (dPos < 0) return false;
+
+  String countPart = s.substring(0, dPos);
+  String sidesPart = s.substring(dPos + 1);
+  countPart.trim();
+  sidesPart.trim();
+
+  // (\d+)? 可选骰子数量，省略时默认为 1
+  int count = 1;
+  if (countPart.length() > 0) {
+    for (size_t i = 0; i < countPart.length(); i++) {
+      if (!isDigit(countPart[i])) return false;
+    }
+    count = countPart.toInt();
+  }
+
+  // (\d+) 骰子面数，必须为纯数字
+  if (sidesPart.length() == 0) return false;
+  for (size_t i = 0; i < sidesPart.length(); i++) {
+    if (!isDigit(sidesPart[i])) return false;
+  }
+  int sides = sidesPart.toInt();
+
+  // 合理性边界保护（避免超大循环消耗或内存溢出）
+  if (count <= 0 || count > 30) return false;
+  if (sides <= 1 || sides > 1000) return false;
+
+  outCount = count;
+  outSides = sides;
+  return true;
+}
+
+// 微信经典六面骰子图标（用于 1d6 模式）
 static void drawSingleDice(int val) {
-  const int dw = 64, dh = 64, r = 10;
-  const int x = (240 - dw) / 2; // 88
-  const int y = 25;
+  const int dw = 56, dh = 56, r = 8;
+  const int x = (240 - dw) / 2; // 92
+  const int y = 20;
   const int ox = x + dw / 2;   // 120
-  const int oy = y + dh / 2;   // 57
-  const int d = 16;
+  const int oy = y + dh / 2;   // 48
+  const int d = 14;
 
-  // 骰子立体微阴影
   M5.Display.fillRoundRect(x + 2, y + 2, dw, dh, r, 0x2965);
-
-  // 骰子本体（高质感白底圆角矩形）
   M5.Display.fillRoundRect(x, y, dw, dh, r, TFT_WHITE);
-  // 边框描边
   M5.Display.drawRoundRect(x, y, dw, dh, r, 0xCE59);
 
-  // 微信/中式经典骰子配色：1点和4点为鲜红色，其余为深墨黑
   const uint16_t redDot = 0xE800;   // 鲜红
   const uint16_t blackDot = 0x18C3; // 深墨黑
 
@@ -3180,45 +3220,46 @@ static void drawSingleDice(int val) {
 
   switch (val) {
     case 1:
-      drawDot(ox, oy, 8, redDot);
+      drawDot(ox, oy, 7, redDot);
       break;
     case 2:
-      drawDot(ox - d, oy - d, 5, blackDot);
-      drawDot(ox + d, oy + d, 5, blackDot);
+      drawDot(ox - d, oy - d, 4, blackDot);
+      drawDot(ox + d, oy + d, 4, blackDot);
       break;
     case 3:
-      drawDot(ox - d, oy - d, 5, blackDot);
-      drawDot(ox, oy, 5, blackDot);
-      drawDot(ox + d, oy + d, 5, blackDot);
+      drawDot(ox - d, oy - d, 4, blackDot);
+      drawDot(ox, oy, 4, blackDot);
+      drawDot(ox + d, oy + d, 4, blackDot);
       break;
     case 4:
-      drawDot(ox - d, oy - d, 5, redDot);
-      drawDot(ox + d, oy - d, 5, redDot);
-      drawDot(ox - d, oy + d, 5, redDot);
-      drawDot(ox + d, oy + d, 5, redDot);
+      drawDot(ox - d, oy - d, 4, redDot);
+      drawDot(ox + d, oy - d, 4, redDot);
+      drawDot(ox - d, oy + d, 4, redDot);
+      drawDot(ox + d, oy + d, 4, redDot);
       break;
     case 5:
-      drawDot(ox - d, oy - d, 5, blackDot);
-      drawDot(ox + d, oy - d, 5, blackDot);
-      drawDot(ox, oy, 5, redDot);
-      drawDot(ox - d, oy + d, 5, blackDot);
-      drawDot(ox + d, oy + d, 5, blackDot);
+      drawDot(ox - d, oy - d, 4, blackDot);
+      drawDot(ox + d, oy - d, 4, blackDot);
+      drawDot(ox, oy, 4, redDot);
+      drawDot(ox - d, oy + d, 4, blackDot);
+      drawDot(ox + d, oy + d, 4, blackDot);
       break;
     case 6:
-      drawDot(ox - d, oy - d, 5, blackDot);
-      drawDot(ox - d, oy, 5, blackDot);
-      drawDot(ox - d, oy + d, 5, blackDot);
-      drawDot(ox + d, oy - d, 5, blackDot);
-      drawDot(ox + d, oy, 5, blackDot);
-      drawDot(ox + d, oy + d, 5, blackDot);
+      drawDot(ox - d, oy - d, 4, blackDot);
+      drawDot(ox - d, oy, 4, blackDot);
+      drawDot(ox - d, oy + d, 4, blackDot);
+      drawDot(ox + d, oy - d, 4, blackDot);
+      drawDot(ox + d, oy, 4, blackDot);
+      drawDot(ox + d, oy + d, 4, blackDot);
       break;
     default:
-      drawDot(ox, oy, 8, redDot);
+      drawDot(ox, oy, 7, redDot);
       break;
   }
 }
 
-static void renderDiceScreen(int currentVal, bool isRolling) {
+static void renderTRPGDiceScreen(int count, int sides, const std::vector<int>& results, int sum,
+                                const String& inputBuffer, const String& statusMsg, bool isRolling) {
   M5.Display.clear();
 
   auto drawCenterCnText = [](const String& str, int y, uint16_t color) {
@@ -3230,22 +3271,109 @@ static void renderDiceScreen(int currentVal, bool isRolling) {
     M5.Display.print(str);
   };
 
-  // 顶部标题
-  drawCenterCnText("=== 六面骰子 ===", 5, TFT_CYAN);
+  // 顶部标题显示当前规则：例如 === 跑团骰子 [4d2] ===
+  String title = "=== 跑团骰子 [" + String(count) + "d" + String(sides) + "] ===";
+  drawCenterCnText(title, 2, TFT_CYAN);
 
-  // 绘制骰子本体
-  drawSingleDice(currentVal);
-
-  // 状态与点数文本
-  if (isRolling) {
-    drawCenterCnText("摇骰子中...", 96, TFT_YELLOW);
+  // 中部主体展示区
+  if (count == 1 && sides == 6) {
+    // 经典 1d6 微信大骰子模式
+    drawSingleDice(results.empty() ? 1 : results[0]);
+    evilSetCnFont(M5.Display, 1.0);
+    if (isRolling) {
+      drawCenterCnText("摇骰子中...", 80, TFT_YELLOW);
+    } else {
+      String tip = "点数: " + String(results.empty() ? 1 : results[0]);
+      drawCenterCnText(tip, 80, TFT_WHITE);
+    }
   } else {
-    String tip = "点数: " + String(currentVal);
-    drawCenterCnText(tip, 96, TFT_WHITE);
+    // 多骰子或非 6 面骰子模式（卡片设计）
+    M5.Display.fillRoundRect(8, 18, 224, 76, 5, 0x10C2);
+    M5.Display.drawRoundRect(8, 18, 224, 76, 5, 0x39E7);
+
+    evilSetCnFont(M5.Display, 1.0);
+    // 第一行：左侧显示投掷规则，右侧醒目显示总和
+    M5.Display.setCursor(14, 22);
+    M5.Display.setTextColor(TFT_LIGHTGRAY, 0x10C2);
+    M5.Display.printf("投掷: %dd%d", count, sides);
+
+    M5.Display.setCursor(130, 22);
+    if (isRolling) {
+      M5.Display.setTextColor(TFT_YELLOW, 0x10C2);
+      M5.Display.print("投掷中...");
+    } else {
+      M5.Display.setTextColor(0xFEA0, 0x10C2); // 金色
+      M5.Display.printf("总和 = %d", sum);
+    }
+
+    // 第二、三行：明细点数列表
+    M5.Display.setCursor(14, 38);
+    M5.Display.setTextColor(TFT_WHITE, 0x10C2);
+    String detailStr = "明细: [";
+    for (size_t i = 0; i < results.size(); i++) {
+      detailStr += String(results[i]);
+      if (i + 1 < results.size()) detailStr += ", ";
+      if (detailStr.length() > 30 && i + 1 < results.size()) {
+        detailStr += "...";
+        break;
+      }
+    }
+    detailStr += "]";
+    M5.Display.print(detailStr);
+
+    // 第四行：特殊规则与检定彩蛋
+    M5.Display.setCursor(14, 56);
+    if (count == 1 && sides == 20) {
+      int r = results.empty() ? 1 : results[0];
+      if (r == 20) {
+        M5.Display.setTextColor(TFT_YELLOW, 0x10C2);
+        M5.Display.print("★ 大成功 (Critical Hit)!");
+      } else if (r == 1) {
+        M5.Display.setTextColor(TFT_RED, 0x10C2);
+        M5.Display.print("✖ 大失败 (Critical Fumble)!");
+      } else {
+        M5.Display.setTextColor(TFT_DARKGRAY, 0x10C2);
+        M5.Display.print("标准二十面骰检定 (D20)");
+      }
+    } else if (count == 1 && sides == 100) {
+      int r = results.empty() ? 1 : results[0];
+      if (r <= 5) {
+        M5.Display.setTextColor(TFT_YELLOW, 0x10C2);
+        M5.Display.printf("★ 大成功 / 极难成功 (<=5): %d", r);
+      } else if (r >= 96) {
+        M5.Display.setTextColor(TFT_RED, 0x10C2);
+        M5.Display.printf("✖ 大失败 (>=96): %d", r);
+      } else {
+        M5.Display.setTextColor(TFT_DARKGRAY, 0x10C2);
+        M5.Display.print("COC 百分比技能检定 (D100)");
+      }
+    } else {
+      M5.Display.setTextColor(TFT_DARKGRAY, 0x10C2);
+      float avg = (float)sum / (float)max(1, count);
+      char buf[32];
+      snprintf(buf, sizeof(buf), "平均点数: %.1f", avg);
+      M5.Display.print(buf);
+    }
   }
 
-  // 底部按键提示
-  drawCenterCnText("[Enter] 掷骰子   [Del] 退出", 117, TFT_LIGHTGRAY);
+  // 底部输入行 (y = 98)
+  evilSetCnFont(M5.Display, 1.0);
+  M5.Display.setCursor(8, 98);
+  if (statusMsg.length() > 0) {
+    M5.Display.setTextColor(TFT_RED, TFT_BLACK);
+    M5.Display.print("提示: " + statusMsg);
+  } else {
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    if (inputBuffer.length() > 0) {
+      M5.Display.print("指令: " + inputBuffer + "_");
+    } else {
+      M5.Display.setTextColor(TFT_DARKGRAY, TFT_BLACK);
+      M5.Display.print("指令: [输入如 4d2, d20]");
+    }
+  }
+
+  // 底部按键提示 (y = 117)
+  drawCenterCnText("[Enter] 投掷   [Del] 退格/退出", 117, TFT_LIGHTGRAY);
   M5.Display.display();
 }
 
@@ -3253,28 +3381,64 @@ void evilDiceRoller() {
   inMenu = false;
   enterDebounce();
 
-  int currentVal = 1; // 点进去之后默认是1
-  renderDiceScreen(currentVal, false);
+  int diceCount = 1;
+  int diceSides = 6;
+  std::vector<int> lastResults = {1}; // 默认点进去是 1
+  int lastSum = 1;
+  String inputBuffer = "";
+  String statusMsg = "";
+  unsigned long statusMsgUntil = 0;
+
+  renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
 
   while (true) {
     M5.update();
     cardUpdate();
+
+    // 清除过期的临时错误提示
+    if (statusMsg.length() > 0 && millis() > statusMsgUntil) {
+      statusMsg = "";
+      renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+    }
 
     bool triggerRoll = false;
     bool triggerExit = false;
 
     if (M5Cardputer.Keyboard.isChange() && kpAny()) {
       Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+
       if (status.del) {
-        triggerExit = true;
+        if (inputBuffer.length() > 0) {
+          inputBuffer.remove(inputBuffer.length() - 1);
+          statusMsg = "";
+          renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+        } else {
+          triggerExit = true;
+        }
       } else if (status.enter) {
         triggerRoll = true;
+      }
+
+      for (auto c : status.word) {
+        if (isDigit(c) || c == 'd' || c == 'D' || c == ' ') {
+          if (inputBuffer.length() < 12) {
+            inputBuffer += (char)c;
+            statusMsg = "";
+            renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+          }
+        }
       }
     }
 
     if (navPendingAction == NAV_BACK) {
       navPendingAction = NAV_NONE;
-      triggerExit = true;
+      if (inputBuffer.length() > 0) {
+        inputBuffer.remove(inputBuffer.length() - 1);
+        statusMsg = "";
+        renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+      } else {
+        triggerExit = true;
+      }
     } else if (navPendingAction == NAV_ENTER) {
       navPendingAction = NAV_NONE;
       triggerRoll = true;
@@ -3285,9 +3449,21 @@ void evilDiceRoller() {
       navPendingCharValid = false;
       navPendingChar = 0;
       if (c == KEY_BACKSPACE) {
-        triggerExit = true;
+        if (inputBuffer.length() > 0) {
+          inputBuffer.remove(inputBuffer.length() - 1);
+          statusMsg = "";
+          renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+        } else {
+          triggerExit = true;
+        }
       } else if (c == KEY_ENTER || c == '\n' || c == '\r') {
         triggerRoll = true;
+      } else if (isDigit(c) || c == 'd' || c == 'D' || c == ' ') {
+        if (inputBuffer.length() < 12) {
+          inputBuffer += (char)c;
+          statusMsg = "";
+          renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+        }
       }
     }
 
@@ -3300,25 +3476,56 @@ void evilDiceRoller() {
 
     if (triggerRoll) {
       enterDebounce();
-      renderDiceScreen(currentVal, true);
 
-      // 像微信骰子一样的减速翻滚跳变动画
-      int steps = 12;
-      int prevVal = currentVal;
-      for (int i = 0; i < steps; i++) {
-        int temp = random(1, 7);
-        while (temp == prevVal) temp = random(1, 7);
-        prevVal = temp;
-        drawSingleDice(temp);
-        M5.Display.display();
-        int delayMs = 30 + (i * 8);
+      // 如果有输入指令，尝试解析 ^\s*(\d+)?[dD](\d+)\s*$
+      if (inputBuffer.length() > 0) {
+        int parsedCount = 1;
+        int parsedSides = 6;
+        if (parseDiceNotation(inputBuffer, parsedCount, parsedSides)) {
+          diceCount = parsedCount;
+          diceSides = parsedSides;
+          inputBuffer = "";
+          statusMsg = "";
+        } else {
+          statusMsg = "格式需如: 4d2, d20";
+          statusMsgUntil = millis() + 1800;
+          renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+          continue;
+        }
+      }
+
+      // 执行投掷动画
+      renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, true);
+
+      int steps = (diceCount == 1 && diceSides == 6) ? 12 : 8;
+      for (int step = 0; step < steps; step++) {
+        std::vector<int> tempResults(diceCount);
+        int tempSum = 0;
+        for (int i = 0; i < diceCount; i++) {
+          tempResults[i] = random(1, diceSides + 1);
+          tempSum += tempResults[i];
+        }
+        if (diceCount == 1 && diceSides == 6) {
+          drawSingleDice(tempResults[0]);
+          M5.Display.display();
+        } else {
+          renderTRPGDiceScreen(diceCount, diceSides, tempResults, tempSum, inputBuffer, statusMsg, true);
+        }
+        int delayMs = 30 + (step * 8);
         delay(delayMs);
         M5.update();
         cardUpdate();
       }
 
-      currentVal = random(1, 7);
-      renderDiceScreen(currentVal, false);
+      // 产生最终结果
+      lastResults.resize(diceCount);
+      lastSum = 0;
+      for (int i = 0; i < diceCount; i++) {
+        lastResults[i] = random(1, diceSides + 1);
+        lastSum += lastResults[i];
+      }
+
+      renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
     }
 
     delay(20);
