@@ -3468,7 +3468,7 @@ static bool parseDiceNotation(const String& input, int& outCount, int& outSides)
 }
 
 // 绘制右侧投掷出的单个 1d6 骰子 (dw=48, dh=48)
-static void drawSingleDice(int val, int x = 138, int y = 26) {
+static void drawSingleDice(int val, int x = 140, int y = 24) {
   const int dw = 48, dh = 48, r = 8;
   const int ox = x + dw / 2;
   const int oy = y + dh / 2;
@@ -3525,6 +3525,123 @@ static void drawSingleDice(int val, int x = 138, int y = 26) {
   }
 }
 
+// 播放 1d6 喵喵的结合 (Mewgenics) 骰皇 Gambit 重拳猛掷与骰子飞跃翻滚动效
+static void animateGambitRoll1d6(int finalVal) {
+  const int baseCatX = 22;
+  const int baseCatY = 18;
+  const int finalDiceX = 140;
+  const int finalDiceY = 24;
+
+  // 1. 蓄力后仰 (Wind-up): Gambit 向后微退蓄力
+  M5.Display.fillRect(10, 16, 95, 72, TFT_BLACK);
+  M5.Display.pushImage(baseCatX - 8, baseCatY + 2, GAMBIT_IMG_W, GAMBIT_IMG_H, gambit_cat_img);
+  M5.Display.fillRect(100, 14, 138, 76, TFT_BLACK);
+  evilSetCnFont(M5.Display, 1.0);
+  M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+  M5.Display.setCursor(144, 75);
+  M5.Display.print("蓄力中...");
+  M5.Display.display();
+  delay(120);
+
+  // 2. 猛扑出拳 (Punch Dash): Gambit 猛烈前扑重拳挥掷
+  M5.Display.fillRect(10, 16, 95, 72, TFT_BLACK);
+  M5.Display.pushImage(baseCatX + 12, baseCatY - 2, GAMBIT_IMG_W, GAMBIT_IMG_H, gambit_cat_img);
+  // 出拳破空速度线
+  M5.Display.drawLine(baseCatX + 12 + GAMBIT_IMG_W + 2, 42, baseCatX + 12 + GAMBIT_IMG_W + 18, 38, TFT_WHITE);
+  M5.Display.drawLine(baseCatX + 12 + GAMBIT_IMG_W + 4, 48, baseCatX + 12 + GAMBIT_IMG_W + 24, 48, 0xFEA0);
+  M5.Display.drawLine(baseCatX + 12 + GAMBIT_IMG_W + 2, 54, baseCatX + 12 + GAMBIT_IMG_W + 16, 58, TFT_WHITE);
+  // 骰子从拳前飞出初速度位置
+  drawSingleDice(random(1, 7), 108, 36);
+  M5.Display.fillRect(130, 74, 108, 22, TFT_BLACK);
+  M5.Display.setCursor(142, 75);
+  M5.Display.setTextColor(0xFEA0, TFT_BLACK);
+  M5.Display.print("猛掷出拳!");
+  M5.Display.display();
+  delay(110);
+
+  // 3. 骰子空中飞跃弧线 (Arc trajectory)
+  struct ArcStep {
+    int dx, dy;
+    int delayMs;
+  } arcSteps[] = {
+    {122, 16, 45},  // 抛物线上升顶点
+    {134, 28, 45},  // 下落接触地面
+    {142, 20, 50},  // 反弹跳起
+  };
+
+  // 清除冲刺特效并恢复 Gambit 原位站立
+  M5.Display.fillRect(10, 16, 115, 72, TFT_BLACK);
+  M5.Display.pushImage(baseCatX, baseCatY, GAMBIT_IMG_W, GAMBIT_IMG_H, gambit_cat_img);
+
+  for (const auto& s : arcSteps) {
+    M5.Display.fillRect(100, 14, 138, 58, TFT_BLACK);
+    drawSingleDice(random(1, 7), s.dx, s.dy);
+    M5.Display.display();
+    delay(s.delayMs);
+  }
+
+  // 4. 原位高速翻滚减速定格 (Spin & Decelerate)
+  int spinDelays[] = {50, 65, 80, 100, 125, 155, 190};
+  for (int d : spinDelays) {
+    int tempVal = random(1, 7);
+    M5.Display.fillRect(100, 14, 138, 58, TFT_BLACK);
+    drawSingleDice(tempVal, finalDiceX, finalDiceY);
+    M5.Display.fillRect(130, 74, 108, 22, TFT_BLACK);
+    M5.Display.setCursor(144, 75);
+    M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+    M5.Display.print("翻滚中...");
+    M5.Display.display();
+    delay(d);
+    M5.update();
+    cardUpdate();
+  }
+
+  // 5. 定格最终点数与 Mewgenics 特效
+  M5.Display.fillRect(100, 14, 138, 58, TFT_BLACK);
+  drawSingleDice(finalVal, finalDiceX, finalDiceY);
+
+  if (finalVal == 6) {
+    M5.Display.drawRoundRect(finalDiceX - 2, finalDiceY - 2, 52, 52, 9, 0xFEA0);
+  } else if (finalVal == 1) {
+    M5.Display.drawRoundRect(finalDiceX - 2, finalDiceY - 2, 52, 52, 9, TFT_RED);
+  }
+
+  M5.Display.fillRect(130, 74, 108, 22, TFT_BLACK);
+  evilSetCnFont(M5.Display, 1.0);
+  M5.Display.setCursor(142, 75);
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5.Display.printf("点数: %d", finalVal);
+
+  M5.Display.setCursor(136, 86);
+  switch (finalVal) {
+    case 1:
+      M5.Display.setTextColor(0xFA08, TFT_BLACK);
+      M5.Display.print("混乱自伤 !");
+      break;
+    case 2:
+      M5.Display.setTextColor(0xBD00, TFT_BLACK);
+      M5.Display.print("便便喷射 !");
+      break;
+    case 3:
+      M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
+      M5.Display.print("激光贯通 !");
+      break;
+    case 4:
+      M5.Display.setTextColor(0xFBE0, TFT_BLACK);
+      M5.Display.print("地刺地震 !");
+      break;
+    case 5:
+      M5.Display.setTextColor(0xFFE0, TFT_BLACK);
+      M5.Display.print("雷暴眩晕 !");
+      break;
+    case 6:
+      M5.Display.setTextColor(0xFEA0, TFT_BLACK);
+      M5.Display.print("★全图大爆炸!");
+      break;
+  }
+  M5.Display.display();
+}
+
 static void renderTRPGDiceScreen(int count, int sides, const std::vector<int>& results, int sum,
                                 const String& inputBuffer, const String& statusMsg, bool isRolling) {
   M5.Display.clear();
@@ -3544,25 +3661,56 @@ static void renderTRPGDiceScreen(int count, int sides, const std::vector<int>& r
 
   // 中部主体展示区
   if (count == 1 && sides == 6) {
-    // 默认 1d6 界面：左侧呈现骰皇 Gambit 投掷立绘，右侧呈现投掷出的骰子
-    M5.Display.pushImage(24, 18, GAMBIT_IMG_W, GAMBIT_IMG_H, gambit_cat_img);
-
-    evilSetCnFont(M5.Display, 1.0);
-    M5.Display.setTextColor(TFT_DARKGRAY, TFT_BLACK);
-    M5.Display.setCursor(22, 88);
-    M5.Display.print("骰皇 Gambit");
+    // 默认 1d6 界面：左侧呈现骰皇 Gambit 投掷立绘，右侧呈现投掷出的骰子（文字已按需求删除）
+    M5.Display.pushImage(22, 18, GAMBIT_IMG_W, GAMBIT_IMG_H, gambit_cat_img);
 
     int curVal = results.empty() ? 1 : results[0];
-    drawSingleDice(curVal, 138, 26);
+    drawSingleDice(curVal, 140, 24);
 
-    // 骰子下方点数指示
-    M5.Display.setCursor(140, 80);
+    // 骰子特效框
+    if (curVal == 6) {
+      M5.Display.drawRoundRect(138, 22, 52, 52, 9, 0xFEA0);
+    } else if (curVal == 1) {
+      M5.Display.drawRoundRect(138, 22, 52, 52, 9, TFT_RED);
+    }
+
+    // 骰子下方点数指示与 Mewgenics 招式评语
+    evilSetCnFont(M5.Display, 1.0);
+    M5.Display.setCursor(142, 75);
     if (isRolling) {
       M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
       M5.Display.print("投掷中...");
     } else {
       M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
       M5.Display.printf("点数: %d", curVal);
+
+      M5.Display.setCursor(136, 86);
+      switch (curVal) {
+        case 1:
+          M5.Display.setTextColor(0xFA08, TFT_BLACK);
+          M5.Display.print("混乱自伤 !");
+          break;
+        case 2:
+          M5.Display.setTextColor(0xBD00, TFT_BLACK);
+          M5.Display.print("便便喷射 !");
+          break;
+        case 3:
+          M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
+          M5.Display.print("激光贯通 !");
+          break;
+        case 4:
+          M5.Display.setTextColor(0xFBE0, TFT_BLACK);
+          M5.Display.print("地刺地震 !");
+          break;
+        case 5:
+          M5.Display.setTextColor(0xFFE0, TFT_BLACK);
+          M5.Display.print("雷暴眩晕 !");
+          break;
+        case 6:
+          M5.Display.setTextColor(0xFEA0, TFT_BLACK);
+          M5.Display.print("★全图大爆炸!");
+          break;
+      }
     }
   } else {
     // 多骰子或非 6 面骰子模式（卡片设计）
@@ -3760,10 +3908,19 @@ void evilDiceRoller() {
         int parsedCount = 1;
         int parsedSides = 6;
         if (parseDiceNotation(inputBuffer, parsedCount, parsedSides)) {
+          bool wasNonStandard = (diceCount != 1 || diceSides != 6);
           diceCount = parsedCount;
           diceSides = parsedSides;
           inputBuffer = "";
           statusMsg = "";
+
+          // 特殊逻辑：在非 6 面骰子投掷界面输入 1d6 (或 d6)，返回初始的 6 面骰界面
+          if (wasNonStandard && diceCount == 1 && diceSides == 6) {
+            lastResults = {1};
+            lastSum = 1;
+            renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+            continue;
+          }
         } else {
           statusMsg = "格式需如: 4d2, d20";
           statusMsgUntil = millis() + 1800;
@@ -3772,38 +3929,41 @@ void evilDiceRoller() {
         }
       }
 
-      // 执行投掷动画
-      renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, true);
+      if (diceCount == 1 && diceSides == 6) {
+        // 产生最终结果
+        lastResults = { (int)random(1, 7) };
+        lastSum = lastResults[0];
 
-      int steps = (diceCount == 1 && diceSides == 6) ? 12 : 8;
-      for (int step = 0; step < steps; step++) {
-        std::vector<int> tempResults(diceCount);
-        int tempSum = 0;
-        for (int i = 0; i < diceCount; i++) {
-          tempResults[i] = random(1, diceSides + 1);
-          tempSum += tempResults[i];
-        }
-        if (diceCount == 1 && diceSides == 6) {
-          drawSingleDice(tempResults[0], 138, 26);
-          M5.Display.display();
-        } else {
+        // 播放 1d6 骰皇出拳猛掷与骰子翻滚动画
+        animateGambitRoll1d6(lastResults[0]);
+      } else {
+        // 多骰子或非 6 面骰子跑团检定投掷
+        renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, true);
+
+        for (int step = 0; step < 8; step++) {
+          std::vector<int> tempResults(diceCount);
+          int tempSum = 0;
+          for (int i = 0; i < diceCount; i++) {
+            tempResults[i] = random(1, diceSides + 1);
+            tempSum += tempResults[i];
+          }
           renderTRPGDiceScreen(diceCount, diceSides, tempResults, tempSum, inputBuffer, statusMsg, true);
+          int delayMs = 30 + (step * 8);
+          delay(delayMs);
+          M5.update();
+          cardUpdate();
         }
-        int delayMs = 30 + (step * 8);
-        delay(delayMs);
-        M5.update();
-        cardUpdate();
-      }
 
-      // 产生最终结果
-      lastResults.resize(diceCount);
-      lastSum = 0;
-      for (int i = 0; i < diceCount; i++) {
-        lastResults[i] = random(1, diceSides + 1);
-        lastSum += lastResults[i];
-      }
+        // 产生最终结果
+        lastResults.resize(diceCount);
+        lastSum = 0;
+        for (int i = 0; i < diceCount; i++) {
+          lastResults[i] = random(1, diceSides + 1);
+          lastSum += lastResults[i];
+        }
 
-      renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+        renderTRPGDiceScreen(diceCount, diceSides, lastResults, lastSum, inputBuffer, statusMsg, false);
+      }
     }
 
     delay(20);
